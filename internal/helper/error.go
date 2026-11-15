@@ -1,6 +1,7 @@
 package helpers
 
 import (
+	"errors"
 	"fmt"
 	"runtime"
 	"strings"
@@ -28,8 +29,20 @@ type (
 	}
 )
 
-func (l *LogEntry) Error() (resp string) {
-	return
+func (l *LogEntry) Error() string {
+	return l.ErrConst + ": " + l.ErrInfo
+}
+
+// ErrCode returns the response code carried by err ("" for nil, GENERAL_ERROR for uncoded errors).
+func ErrCode(err error) string {
+	if err == nil {
+		return ""
+	}
+	var e *LogEntry
+	if errors.As(err, &e) {
+		return e.ErrConst
+	}
+	return respConst.GENERAL_ERROR
 }
 
 func NewError(sharedHolder *models.SharedHolder) Error {
@@ -43,8 +56,7 @@ func (e *ErrorImpl) Wrap(errConst, errInfo string) error {
 		component, srcFile, srcFunc string
 		errWrap                     bool
 		allowlistDomains            = []string{
-			respConst.INVALID_REQUEST_HEADER,
-			respConst.MANDATORY_FIELD,
+			respConst.VALIDATION_ERROR, // message is the field-level validation detail
 		}
 	)
 
@@ -59,7 +71,9 @@ func (e *ErrorImpl) Wrap(errConst, errInfo string) error {
 
 		fileParts := strings.Split(file, "/")
 		file = fileParts[len(fileParts)-1]
-		component = fileParts[len(fileParts)-2]
+		if len(fileParts) > 1 {
+			component = fileParts[len(fileParts)-2]
+		}
 		srcFile = fmt.Sprintf("%s:%d", file, line)
 	}
 

@@ -2,20 +2,29 @@ package models
 
 import "github.com/labstack/echo/v4"
 
-type BaseResponses struct {
-	ResponseCode string      `json:"responseCode"`
-	ResponseDesc string      `json:"responseDesc"`
-	ResponseData interface{} `json:"responseData"`
+type DataResponse struct {
+	Data any `json:"data"`
+	Meta any `json:"meta,omitempty"`
+}
+
+type ErrorBody struct {
+	Code    string `json:"code"`
+	Message string `json:"message"`
+}
+
+type ErrorResponse struct {
+	Error ErrorBody `json:"error"`
 }
 
 type ResponsePayload struct {
-	Code     string `json:"response_code"`
-	Desc     string `json:"response_desc"`
+	Desc     string
 	HttpCode int
 }
 
 type ResponseArgs struct {
 	Ctx       echo.Context
+	Status    int // defaults to 200
 	RespData  interface{}
+	Meta      interface{}
 	ErrorData error
 }

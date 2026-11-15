@@ -66,24 +66,24 @@ func (l *logrusLogger) WithFields(fields map[string]interface{}) logger.Logger {
 	return &logrusEntry{entry: l.log.WithFields(logruslib.Fields(fields))}
 }
 
-func (l *logrusLogger) Info(args ...interface{})                 { l.log.Info(args...) }
-func (l *logrusLogger) Error(args ...interface{})                { l.log.Error(args...) }
-func (l *logrusLogger) Debug(args ...interface{})                { l.log.Debug(args...) }
-func (l *logrusLogger) Fatal(args ...interface{})                { l.log.Fatal(args...) }
+func (l *logrusLogger) Info(args ...interface{})                  { l.log.Info(args...) }
+func (l *logrusLogger) Error(args ...interface{})                 { l.log.Error(args...) }
+func (l *logrusLogger) Debug(args ...interface{})                 { l.log.Debug(args...) }
+func (l *logrusLogger) Fatal(args ...interface{})                 { l.log.Fatal(args...) }
 func (l *logrusLogger) Fatalf(format string, args ...interface{}) { l.log.Fatalf(format, args...) }
-func (l *logrusLogger) Errorf(format string, v ...interface{})   { l.log.Errorf(format, v...) }
-func (l *logrusLogger) Warnf(format string, v ...interface{})    { l.log.Warnf(format, v...) }
-func (l *logrusLogger) Debugf(format string, v ...interface{})   { l.log.Debugf(format, v...) }
+func (l *logrusLogger) Errorf(format string, v ...interface{})    { l.log.Errorf(format, v...) }
+func (l *logrusLogger) Warnf(format string, v ...interface{})     { l.log.Warnf(format, v...) }
+func (l *logrusLogger) Debugf(format string, v ...interface{})    { l.log.Debugf(format, v...) }
 
 func (e *logrusEntry) WithFields(fields map[string]interface{}) logger.Logger {
 	return &logrusEntry{entry: e.entry.WithFields(logruslib.Fields(fields))}
 }
 
-func (e *logrusEntry) Info(args ...interface{})                 { e.entry.Info(args...) }
-func (e *logrusEntry) Error(args ...interface{})                { e.entry.Error(args...) }
-func (e *logrusEntry) Debug(args ...interface{})                { e.entry.Debug(args...) }
-func (e *logrusEntry) Fatal(args ...interface{})                { e.entry.Fatal(args...) }
+func (e *logrusEntry) Info(args ...interface{})                  { e.entry.Info(args...) }
+func (e *logrusEntry) Error(args ...interface{})                 { e.entry.Error(args...) }
+func (e *logrusEntry) Debug(args ...interface{})                 { e.entry.Debug(args...) }
+func (e *logrusEntry) Fatal(args ...interface{})                 { e.entry.Fatal(args...) }
 func (e *logrusEntry) Fatalf(format string, args ...interface{}) { e.entry.Fatalf(format, args...) }
-func (e *logrusEntry) Errorf(format string, v ...interface{})   { e.entry.Errorf(format, v...) }
-func (e *logrusEntry) Warnf(format string, v ...interface{})    { e.entry.Warnf(format, v...) }
-func (e *logrusEntry) Debugf(format string, v ...interface{})   { e.entry.Debugf(format, v...) }
+func (e *logrusEntry) Errorf(format string, v ...interface{})    { e.entry.Errorf(format, v...) }
+func (e *logrusEntry) Warnf(format string, v ...interface{})     { e.entry.Warnf(format, v...) }
+func (e *logrusEntry) Debugf(format string, v ...interface{})    { e.entry.Debugf(format, v...) }

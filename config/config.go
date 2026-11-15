@@ -2,6 +2,7 @@ package config
 
 import (
 	"fmt"
+	"time"
 
 	"github.com/caarlos0/env/v10"
 	"github.com/joho/godotenv"
@@ -16,24 +17,32 @@ type SystemConfig struct {
 	DBHost      string `env:"DB_HOST" envDefault:"localhost"`
 	DBUsername  string `env:"DB_USERNAME" envDefault:"postgres"`
 	DBPassword  string `env:"DB_PASSWORD" envDefault:"postgres"`
-	DBName      string `env:"DB_NAME" envDefault:"ms-approval"`
+	DBName      string `env:"DB_NAME" envDefault:"storybook"`
 	DBPort      string `env:"DB_PORT" envDefault:"5432"`
 	DBSSLMode   string `env:"DB_SSL_MODE" envDefault:"disable"`
 	DBTimezone  string `env:"DB_TIMEZONE" envDefault:"UTC"`
 	DBDebugMode bool   `env:"DB_DEBUG_MODE" envDefault:"false"`
 
-	//Redis cache
-	RedisHost     string `env:"REDIS_HOST" envDefault:"127.0.0.1"`
-	RedisPort     string `env:"REDIS_PORT" envDefault:"6379"`
-	RedisPassword string `env:"REDIS_PASSWORD" envDefault:"123456"`
+	//Auth — JWT_SECRET has no default on purpose; the server refuses to start without it.
+	JWTSecret       string        `env:"JWT_SECRET"`
+	AccessTokenTTL  time.Duration `env:"ACCESS_TOKEN_TTL" envDefault:"30m"`
+	RefreshTokenTTL time.Duration `env:"REFRESH_TOKEN_TTL" envDefault:"168h"`
 
-	//Mongo
-	MongoUri        string `env:"MONGO_URI" envDefault:"mongodb://localhost:27017"`
-	MongoDb         string `env:"MONGO_DB" envDefault:"doc"`
-	MongoCollection string `env:"MONGO_COLLECTION" envDefault:"logs"`
+	//Subscription auto-renew job
+	RenewalInterval time.Duration `env:"RENEWAL_INTERVAL" envDefault:"1h"`
 
-	//Method
-	LoggingAllowedMethod string `env:"LOGGING_ALLOWED_METHOD" envDefault:"POST,PUT,DELETE,PATCH"`
+	//CORS — comma separated origins of the Lovable frontends
+	CORSAllowOrigins []string `env:"CORS_ALLOW_ORIGINS" envSeparator:"," envDefault:"*"`
+
+	//Seed accounts (go run main.go seed) — mocked login per PRD, values only from env
+	SeedParentName     string `env:"SEED_PARENT_NAME" envDefault:"Demo Parent"`
+	SeedParentEmail    string `env:"SEED_PARENT_EMAIL"`
+	SeedParentPassword string `env:"SEED_PARENT_PASSWORD"`
+	SeedAdminName      string `env:"SEED_ADMIN_NAME" envDefault:"Demo Admin"`
+	SeedAdminEmail     string `env:"SEED_ADMIN_EMAIL"`
+	SeedAdminPassword  string `env:"SEED_ADMIN_PASSWORD"`
+	SeedPlanPrice      int    `env:"SEED_PLAN_PRICE" envDefault:"49000"`
+	SeedPlanBenefits   string `env:"SEED_PLAN_BENEFITS" envDefault:"Read all published books."`
 }
 
 func LoadEnv() *SystemConfig {
