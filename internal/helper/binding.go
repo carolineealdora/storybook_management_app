@@ -6,6 +6,8 @@ import (
 	"reflect"
 	"strings"
 
+	respConst "codebase/internal/constant/response"
+
 	"github.com/go-playground/validator/v10"
 
 	"github.com/labstack/echo/v4"
@@ -156,4 +158,12 @@ func copyInto(src any, dst request) error {
 		return err
 	}
 	return json.Unmarshal(b, dst)
+}
+
+// BindValid binds and validates req; failures come back as a VALIDATION_ERROR carrying the field detail.
+func BindValid(b Binding, ec echo.Context, req request) error {
+	if err := b.Bind(CustomBinder{Request: req, Context: ec}); err != nil {
+		return NewError(nil).Wrap(respConst.VALIDATION_ERROR, err.Error())
+	}
+	return nil
 }

@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 
+	"codebase/handler/controllers/auth"
 	"codebase/handler/controllers/healthcheck"
 	"codebase/internal/constant/key"
 	helpers "codebase/internal/helper"
@@ -45,7 +46,21 @@ func InitRoute(sharedHolder *models.SharedHolder) {
 	}))
 
 	healthcheckCtrl := healthcheck.NewController(sharedHolder)
+	authCtrl := auth.NewController(sharedHolder)
+
+	parentOnly := helpers.RequireAccount(sharedHolder, models.AccountParent)
+	adminOnly := helpers.RequireAccount(sharedHolder, models.AccountAdmin)
 
 	v1 := e.Group("/api/v1")
 	v1.GET("/healthcheck", healthcheckCtrl.GetHealthcheck) // PUBLIC
+
+	// --- Digital Storybook Library app (parent) ---
+	v1.POST("/auth/login", authCtrl.Login)     // PUBLIC
+	v1.POST("/auth/refresh", authCtrl.Refresh) // PUBLIC — parent and admin
+	v1.POST("/auth/logout", authCtrl.Logout, parentOnly)
+
+	// --- Book Management app (admin) ---
+	admin := v1.Group("/admin")
+	admin.POST("/auth/login", authCtrl.AdminLogin) // PUBLIC
+	admin.POST("/auth/logout", authCtrl.Logout, adminOnly)
 }
