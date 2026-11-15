@@ -36,11 +36,16 @@ func Ctx(r Req) (echo.Context, *httptest.ResponseRecorder) {
 		req.Header.Set(echo.HeaderContentType, ct)
 	}
 	rec := httptest.NewRecorder()
-	c := echo.New().NewContext(req, rec)
+	e := echo.New()
+	// echo caps path params at the router's max; register a dummy route so params survive.
+	e.GET("/_/:p1/:p2/:p3", func(echo.Context) error { return nil })
+	c := e.NewContext(req, rec)
+	var names, values []string
 	for k, v := range r.Params {
-		c.SetParamNames(append(c.ParamNames(), k)...)
-		c.SetParamValues(append(c.ParamValues(), v)...)
+		names, values = append(names, k), append(values, v)
 	}
+	c.SetParamNames(names...)
+	c.SetParamValues(values...)
 	if r.Claims != nil {
 		helpers.SetClaims(c, *r.Claims)
 	}

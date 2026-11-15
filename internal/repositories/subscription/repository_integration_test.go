@@ -59,3 +59,27 @@ func TestGetActive_ActivePresent_ReturnsIt(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, models.SubActive, s.Status)
 }
+
+func TestPlan_GetAndSave_UpdatesInPlace(t *testing.T) {
+	e := setup(t)
+	p, err := e.repo.GetPlan()
+	require.NoError(t, err)
+	assert.Equal(t, 49000, p.Price)
+
+	p.Price, p.Benefits, p.UpdatedAt = 59000, "more", time.Now()
+	require.NoError(t, e.repo.SavePlan(p))
+	again, err := e.repo.GetPlan()
+	require.NoError(t, err)
+	assert.Equal(t, p.ID, again.ID)
+	assert.Equal(t, 59000, again.Price)
+}
+
+func TestPlan_NoneConfigured_SaveCreates(t *testing.T) {
+	db := testdb.Open(t)
+	r := &Repo{db: db}
+	_, err := r.GetPlan()
+	assert.ErrorIs(t, err, gorm.ErrRecordNotFound)
+	p := &models.SubscriptionPlan{Price: 1000, Benefits: "x", Duration: "1 month", CreatedAt: time.Now(), UpdatedAt: time.Now()}
+	require.NoError(t, r.SavePlan(p))
+	assert.NotEmpty(t, p.ID)
+}
