@@ -9,6 +9,7 @@ import (
 	"codebase/handler/controllers/auth"
 	"codebase/handler/controllers/book"
 	"codebase/handler/controllers/healthcheck"
+	"codebase/handler/controllers/order"
 	"codebase/handler/controllers/subscription"
 	"codebase/internal/constant/key"
 	helpers "codebase/internal/helper"
@@ -54,6 +55,7 @@ func InitRoute(sharedHolder *models.SharedHolder) {
 	accountCtrl := account.NewController(sharedHolder)
 	adminBookCtrl := adminbook.NewController(sharedHolder)
 	bookCtrl := book.NewController(sharedHolder)
+	orderCtrl := order.NewController(sharedHolder)
 	subscriptionCtrl := subscription.NewController(sharedHolder)
 
 	parentOnly := helpers.RequireAccount(sharedHolder, models.AccountParent)
@@ -79,6 +81,11 @@ func InitRoute(sharedHolder *models.SharedHolder) {
 	v1.GET("/books/:id", bookCtrl.Get, parentOnly)
 	v1.GET("/books/:id/cover", bookCtrl.Cover, helpers.RequireAccount(sharedHolder, models.AccountParent, models.AccountAdmin))
 	v1.GET("/books/:id/content", bookCtrl.Content, parentOnly)
+
+	bookOrders := v1.Group("/book-orders", parentOnly)
+	bookOrders.POST("", orderCtrl.Create)
+	bookOrders.GET("", orderCtrl.List)
+	bookOrders.POST("/:id/pay", orderCtrl.Pay)
 
 	// --- Book Management app (admin) ---
 	admin := v1.Group("/admin")

@@ -189,3 +189,9 @@ type OwnedBook struct {
 	PricePaid   int       `gorm:"column:price_paid"`
 	PurchasedAt time.Time `gorm:"column:purchased_at"`
 }
+
+// BookOrderRow is a book order joined with the book title (Order History).
+type BookOrderRow struct {
+	BookOrder
+	BookTitle string `gorm:"column:book_title"`
+}
