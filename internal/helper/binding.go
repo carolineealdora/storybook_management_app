@@ -167,3 +167,12 @@ func BindValid(b Binding, ec echo.Context, req request) error {
 	}
 	return nil
 }
+
+// PathUUID returns the named path param, or a VALIDATION_ERROR when it is not a UUID.
+func PathUUID(ec echo.Context, name string) (string, error) {
+	v := ec.Param(name)
+	if err := validate.Var(v, "required,uuid"); err != nil {
+		return "", NewError(nil).Wrap(respConst.VALIDATION_ERROR, name+" must be a valid id.")
+	}
+	return v, nil
+}

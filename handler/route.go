@@ -5,8 +5,10 @@ import (
 	"context"
 
 	"codebase/handler/controllers/account"
+	"codebase/handler/controllers/adminbook"
 	"codebase/handler/controllers/auth"
 	"codebase/handler/controllers/healthcheck"
+	"codebase/handler/controllers/subscription"
 	"codebase/internal/constant/key"
 	helpers "codebase/internal/helper"
 	"codebase/models"
@@ -49,6 +51,8 @@ func InitRoute(sharedHolder *models.SharedHolder) {
 	healthcheckCtrl := healthcheck.NewController(sharedHolder)
 	authCtrl := auth.NewController(sharedHolder)
 	accountCtrl := account.NewController(sharedHolder)
+	adminBookCtrl := adminbook.NewController(sharedHolder)
+	subscriptionCtrl := subscription.NewController(sharedHolder)
 
 	parentOnly := helpers.RequireAccount(sharedHolder, models.AccountParent)
 	adminOnly := helpers.RequireAccount(sharedHolder, models.AccountAdmin)
@@ -72,4 +76,15 @@ func InitRoute(sharedHolder *models.SharedHolder) {
 	admin := v1.Group("/admin")
 	admin.POST("/auth/login", authCtrl.AdminLogin) // PUBLIC
 	admin.POST("/auth/logout", authCtrl.Logout, adminOnly)
+
+	// Uploads are capped per file in the service; this caps the whole request (cover + EPUB + fields).
+	adminBooks := admin.Group("/books", adminOnly, middleware.BodyLimit("60M"))
+	adminBooks.GET("", adminBookCtrl.List)
+	adminBooks.POST("", adminBookCtrl.Create)
+	adminBooks.GET("/:id", adminBookCtrl.Get)
+	adminBooks.PUT("/:id", adminBookCtrl.Update)
+	adminBooks.DELETE("/:id", adminBookCtrl.Delete)
+
+	admin.GET("/subscription-plan", subscriptionCtrl.GetPlan, adminOnly)
+	admin.PUT("/subscription-plan", subscriptionCtrl.PutPlan, adminOnly)
 }

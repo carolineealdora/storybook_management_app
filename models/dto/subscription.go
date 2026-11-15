@@ -11,3 +11,18 @@ type SubscriptionOrderView struct {
 	CreatedAt time.Time  `json:"created_at"`
 	PaidAt    *time.Time `json:"paid_at"`
 }
+
+type PlanView struct {
+	ID        string    `json:"id"`
+	Price     int       `json:"price"`
+	Benefits  string    `json:"benefits"`
+	Duration  string    `json:"duration"`
+	UpdatedAt time.Time `json:"updated_at"`
+}
+
+type UpdatePlanRequest struct {
+	Price    int    `json:"price" validate:"required,gt=0"`
+	Benefits string `json:"benefits" validate:"required,max=2000"`
+}
+
+func (r UpdatePlanRequest) Validate() interface{} { return r }

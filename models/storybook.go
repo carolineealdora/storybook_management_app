@@ -1,6 +1,9 @@
 package models
 
-import "time"
+import (
+	"fmt"
+	"time"
+)
 
 const (
 	AccountParent = "parent"
@@ -168,3 +171,14 @@ type Purchase struct {
 }
 
 func (Purchase) TableName() string { return "purchases" }
+
+// AgeLabel renders the age range as shown on covers: "1–3" for a range, "3+" for a number (PRD US-16).
+func (b Book) AgeLabel() string {
+	if b.AgeType == AgeRange && b.AgeMax != nil {
+		return fmt.Sprintf("%d–%d", b.AgeMin, *b.AgeMax)
+	}
+	return fmt.Sprintf("%d+", b.AgeMin)
+}
+
+// CoverURL is the API path serving the book's cover image.
+func (b Book) CoverURL() string { return "/api/v1/books/" + b.ID + "/cover" }
