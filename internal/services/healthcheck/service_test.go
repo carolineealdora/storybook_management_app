@@ -9,7 +9,6 @@ import (
 	repository_mock "codebase/test/mock/repository"
 
 	"github.com/labstack/echo/v4"
-	"go.mongodb.org/mongo-driver/mongo"
 )
 
 func TestNewViewService(t *testing.T) {
@@ -26,7 +25,6 @@ func TestNewViewService(t *testing.T) {
 				Log:    nil,
 				Echo:   &echo.Echo{},
 				Sql:    nil,
-				Mongo:  &mongo.Client{},
 			},
 			repositoryHolder: repositoryHolder{
 				HealthcheckRepository: mockRepo,
