@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"codebase/handler"
+	"codebase/internal/services/subscription"
 	"codebase/migrations"
 	"codebase/models"
 )
@@ -85,6 +86,7 @@ func run(shared *models.SharedHolder) {
 	defer stop()
 
 	handler.InitRoute(shared)
+	renewalDone := subscription.StartRenewalJob(ctx, subscription.NewService(shared), shared.Config.RenewalInterval, shared.Log)
 
 	go func() {
 		if err := shared.Echo.Start("0.0.0.0:" + shared.Config.Port); err != nil && !errors.Is(err, http.ErrServerClosed) {
@@ -98,5 +100,6 @@ func run(shared *models.SharedHolder) {
 	if err := shared.Echo.Shutdown(shutdownCtx); err != nil {
 		shared.Log.Error(err)
 	}
+	<-renewalDone
 	shared.Log.Info("server stopped")
 }

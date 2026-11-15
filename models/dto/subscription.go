@@ -26,3 +26,9 @@ type UpdatePlanRequest struct {
 }
 
 func (r UpdatePlanRequest) Validate() interface{} { return r }
+
+type CreateSubscriptionOrderRequest struct {
+	IdempotencyKey string `json:"idempotency_key" validate:"required,max=100"`
+}
+
+func (r CreateSubscriptionOrderRequest) Validate() interface{} { return r }

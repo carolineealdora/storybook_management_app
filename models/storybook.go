@@ -195,3 +195,15 @@ type BookOrderRow struct {
 	BookOrder
 	BookTitle string `gorm:"column:book_title"`
 }
+
+// SubscriptionHistoryRow is a subscription period with the order that paid for it (Subscription History).
+type SubscriptionHistoryRow struct {
+	Subscription
+	OrderID        *string    `gorm:"column:order_id"`
+	OrderPlanID    *string    `gorm:"column:order_plan_id"`
+	OrderType      *string    `gorm:"column:order_type"`
+	OrderPrice     *int       `gorm:"column:order_price"`
+	OrderStatus    *string    `gorm:"column:order_status"`
+	OrderCreatedAt *time.Time `gorm:"column:order_created_at"`
+	OrderPaidAt    *time.Time `gorm:"column:order_paid_at"`
+}

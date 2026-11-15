@@ -19,6 +19,12 @@ type (
 	Service interface {
 		GetPlan() (*dto.PlanView, error)
 		UpdatePlan(price int, benefits string) (*dto.PlanView, error)
+
+		CreateOrder(userID, idempotencyKey string) (*dto.SubscriptionOrderView, error)
+		PayOrder(userID, orderID, result string) (*dto.SubscriptionView, error)
+		Cancel(userID string) (*dto.SubscriptionView, error)
+		History(userID string) ([]dto.SubscriptionView, error)
+		RenewDue() (int, error)
 	}
 
 	ServiceImpl struct {

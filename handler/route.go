@@ -87,6 +87,12 @@ func InitRoute(sharedHolder *models.SharedHolder) {
 	bookOrders.GET("", orderCtrl.List)
 	bookOrders.POST("/:id/pay", orderCtrl.Pay)
 
+	v1.GET("/subscription/plan", subscriptionCtrl.GetPlan, parentOnly)
+	v1.POST("/subscription-orders", subscriptionCtrl.CreateOrder, parentOnly)
+	v1.POST("/subscription-orders/:id/pay", subscriptionCtrl.PayOrder, parentOnly)
+	v1.POST("/subscriptions/current/cancel", subscriptionCtrl.Cancel, parentOnly)
+	v1.GET("/subscriptions", subscriptionCtrl.History, parentOnly)
+
 	// --- Book Management app (admin) ---
 	admin := v1.Group("/admin")
 	admin.POST("/auth/login", authCtrl.AdminLogin) // PUBLIC
