@@ -131,12 +131,16 @@ func TestCreate_InvalidAgeRange_ReturnsInvalidAgeRange(t *testing.T) {
 func TestCreate_InvalidFiles_ReturnsInvalidFileFormat(t *testing.T) {
 	svc, _ := newSvc()
 	cases := map[string]func(*dto.BookInput){
-		"cover gif ext":          func(i *dto.BookInput) { i.Cover.FileName = "c.gif" },
-		"cover renamed text":     func(i *dto.BookInput) { i.Cover = &dto.Upload{FileName: "c.png", Content: []byte("hello world, not an image")} },
-		"cover empty":            func(i *dto.BookInput) { i.Cover = &dto.Upload{FileName: "c.png"} },
-		"epub pdf ext":           func(i *dto.BookInput) { i.Epub.FileName = "book.pdf" },
-		"epub renamed png":       func(i *dto.BookInput) { i.Epub = &dto.Upload{FileName: "book.epub", Content: apitest.PNG} },
-		"epub zip but not epub":  func(i *dto.BookInput) { i.Epub = &dto.Upload{FileName: "book.epub", Content: []byte("PK\x03\x04plainzipfile.txt")} },
+		"cover gif ext": func(i *dto.BookInput) { i.Cover.FileName = "c.gif" },
+		"cover renamed text": func(i *dto.BookInput) {
+			i.Cover = &dto.Upload{FileName: "c.png", Content: []byte("hello world, not an image")}
+		},
+		"cover empty":      func(i *dto.BookInput) { i.Cover = &dto.Upload{FileName: "c.png"} },
+		"epub pdf ext":     func(i *dto.BookInput) { i.Epub.FileName = "book.pdf" },
+		"epub renamed png": func(i *dto.BookInput) { i.Epub = &dto.Upload{FileName: "book.epub", Content: apitest.PNG} },
+		"epub zip but not epub": func(i *dto.BookInput) {
+			i.Epub = &dto.Upload{FileName: "book.epub", Content: []byte("PK\x03\x04plainzipfile.txt")}
+		},
 		"epub without extension": func(i *dto.BookInput) { i.Epub.FileName = "book" },
 	}
 	for name, mutate := range cases {

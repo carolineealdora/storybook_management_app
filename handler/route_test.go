@@ -110,6 +110,11 @@ var expectedRoutes = []string{
 	"POST /api/v1/book-orders",
 	"GET /api/v1/book-orders",
 	"POST /api/v1/book-orders/:id/pay",
+	"GET /api/v1/subscription/plan",
+	"POST /api/v1/subscription-orders",
+	"POST /api/v1/subscription-orders/:id/pay",
+	"POST /api/v1/subscriptions/current/cancel",
+	"GET /api/v1/subscriptions",
 }
 
 var paramRe = regexp.MustCompile(`:[A-Za-z]+`)
