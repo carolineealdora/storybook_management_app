@@ -102,6 +102,11 @@ var expectedRoutes = []string{
 	"DELETE /api/v1/admin/books/:id",
 	"GET /api/v1/admin/subscription-plan",
 	"PUT /api/v1/admin/subscription-plan",
+	"GET /api/v1/books",
+	"GET /api/v1/books/:id",
+	"GET /api/v1/books/:id/cover",
+	"GET /api/v1/books/:id/content",
+	"GET /api/v1/me/books",
 }
 
 var paramRe = regexp.MustCompile(`:[A-Za-z]+`)
