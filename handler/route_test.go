@@ -90,6 +90,11 @@ var expectedRoutes = []string{
 	"POST /api/v1/auth/logout",
 	"POST /api/v1/admin/auth/login",
 	"POST /api/v1/admin/auth/logout",
+	"GET /api/v1/me",
+	"PATCH /api/v1/me",
+	"PUT /api/v1/me/pin",
+	"POST /api/v1/me/pin/verify",
+	"POST /api/v1/me/pin/forgot",
 }
 
 var paramRe = regexp.MustCompile(`:[A-Za-z]+`)

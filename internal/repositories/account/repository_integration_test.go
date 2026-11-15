@@ -68,3 +68,41 @@ func TestRefreshToken_CreateGetRevoke_OnlyForOwner(t *testing.T) {
 	require.NotNil(t, got.RevokedAt)
 	assert.WithinDuration(t, now, *got.RevokedAt, time.Second)
 }
+
+func TestPin_SetIncrementLockReset_PersistsState(t *testing.T) {
+	r, _ := seeded(t)
+	cred, err := r.GetCredentialByEmail("parent@example.com")
+	require.NoError(t, err)
+	uid := *cred.UserID
+	now := time.Now().UTC()
+
+	byUser, err := r.GetCredentialByUserID(uid)
+	require.NoError(t, err)
+	assert.Equal(t, cred.ID, byUser.ID)
+
+	require.NoError(t, r.UpdateUserName(uid, "Renamed", now))
+	require.NoError(t, r.SetPin(uid, "hash-1", now))
+	for want := 1; want <= 3; want++ {
+		n, err := r.IncrementPinFailures(uid)
+		require.NoError(t, err)
+		assert.Equal(t, want, n)
+	}
+	require.NoError(t, r.LockPin(uid, now.Add(time.Minute)))
+	u, err := r.GetUser(uid)
+	require.NoError(t, err)
+	assert.Equal(t, "Renamed", u.Name)
+	assert.Equal(t, "hash-1", *u.PinHash)
+	assert.Equal(t, 0, u.PinFailedAttempts)
+	require.NotNil(t, u.PinLockedUntil)
+
+	require.NoError(t, r.ResetPinFailures(uid))
+	u, err = r.GetUser(uid)
+	require.NoError(t, err)
+	assert.Nil(t, u.PinLockedUntil)
+}
+
+func TestIncrementPinFailures_UnknownUser_ReturnsNotFound(t *testing.T) {
+	r, _ := seeded(t)
+	_, err := r.IncrementPinFailures("99999999-9999-9999-9999-999999999999")
+	assert.ErrorIs(t, err, gorm.ErrRecordNotFound)
+}

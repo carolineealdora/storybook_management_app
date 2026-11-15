@@ -36,3 +36,34 @@ func (m *AccountRepository) GetRefreshToken(tokenHash string) (*models.RefreshTo
 func (m *AccountRepository) RevokeRefreshToken(tokenHash, credentialID string, at time.Time) error {
 	return m.Called(tokenHash, credentialID, at).Error(0)
 }
+
+func (m *AccountRepository) GetUser(id string) (*models.User, error) {
+	a := m.Called(id)
+	return ret[*models.User](a, 0), a.Error(1)
+}
+
+func (m *AccountRepository) GetCredentialByUserID(userID string) (*models.Credential, error) {
+	a := m.Called(userID)
+	return ret[*models.Credential](a, 0), a.Error(1)
+}
+
+func (m *AccountRepository) UpdateUserName(id, name string, at time.Time) error {
+	return m.Called(id, name, at).Error(0)
+}
+
+func (m *AccountRepository) SetPin(userID, pinHash string, at time.Time) error {
+	return m.Called(userID, pinHash, at).Error(0)
+}
+
+func (m *AccountRepository) IncrementPinFailures(userID string) (int, error) {
+	a := m.Called(userID)
+	return a.Int(0), a.Error(1)
+}
+
+func (m *AccountRepository) LockPin(userID string, until time.Time) error {
+	return m.Called(userID, until).Error(0)
+}
+
+func (m *AccountRepository) ResetPinFailures(userID string) error {
+	return m.Called(userID).Error(0)
+}
