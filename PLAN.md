@@ -1,7 +1,7 @@
 # Plan: Storybook Library — Backend Service
 **Source:** [docs/PRD_storybook-lib-app.md](docs/PRD_storybook-lib-app.md) (US-01 … US-17, edge cases E1–E22, §12 system design)
 **Branch:** `feat/STORY-1-backend-service` (no ticket ID was provided, so STORY-1 is a placeholder; rename with `git branch -m`)
-**Status:** AWAITING REVIEW. No production code until this plan is annotated and confirmed.
+**Status:** DONE. All phases implemented. Decisions D1, D3, D4, D5, D7 confirmed by the engineer on 2026-11-16; Risk 2 approved (docs replaced).
 **Last updated:** 2026-11-16
 
 ---
@@ -9,15 +9,15 @@
 ## Phases
 Each phase is two commits: `test(scope): …` (failing tests, failure output shown), then `feat(scope): …` (implementation, `make done` green).
 
-- [ ] **Phase 0: Scaffold fixes** (`chore`)
-- [ ] **Phase 1: Schema + seed** (`db`)
-- [ ] **Phase 2: Auth**: parent and admin login, refresh, logout, JWT + role middleware (`auth`)
-- [ ] **Phase 3: Profile & PIN**: `/me`, PIN set, verify, and forgot, with lockout (`account`)
-- [ ] **Phase 4: Back office**: book CRUD with file upload, subscription plan config (`admin`)
-- [ ] **Phase 5: Library**: showcase with access status, detail, cover, EPUB stream, My Book (`book`)
-- [ ] **Phase 6: Book orders**: Buy Now, mock pay, Order History (`order`)
-- [ ] **Phase 7: Subscriptions**: plan, subscribe, mock pay, cancel, history, auto-renew job (`subscription`)
-- [ ] **Phase 8: Docs + done report**: real API contract and data model docs, coverage ≥ 80%
+- [x] **Phase 0: Scaffold fixes** (`chore`)
+- [x] **Phase 1: Schema + seed** (`db`)
+- [x] **Phase 2: Auth**: parent and admin login, refresh, logout, JWT + role middleware (`auth`)
+- [x] **Phase 3: Profile & PIN**: `/me`, PIN set, verify, and forgot, with lockout (`account`)
+- [x] **Phase 4: Back office**: book CRUD with file upload, subscription plan config (`admin`)
+- [x] **Phase 5: Library**: showcase with access status, detail, cover, EPUB stream, My Book (`book`)
+- [x] **Phase 6: Book orders**: Buy Now, mock pay, Order History (`order`)
+- [x] **Phase 7: Subscriptions**: plan, subscribe, mock pay, cancel, history, auto-renew job (`subscription`)
+- [x] **Phase 8: Docs + done report**: real API contract and data model docs, coverage ≥ 80%
 
 ---
 
@@ -34,7 +34,7 @@ Each phase is two commits: `test(scope): …` (failing tests, failure output sho
 | The response envelope is `{responseCode, responseDesc, responseData}`, but PRD §12.4 specifies `{error:{code,message}}`. | See D1. |
 | `go.mod` says `go 1.20` while CI uses 1.22. | Bump to 1.22. |
 
-## Phase 1: Schema (one SQL migration per PRD §12.2 table, UUID PKs, `INTEGER` IDR, `VARCHAR`+`CHECK` enums)
+## Phase 1: Schema (single initial migration file covering every PRD §12.2 table, UUID PKs, `INTEGER` IDR, `VARCHAR`+`CHECK` enums)
 `users`, `admins`, `credentials`, `refresh_tokens`, `books` (`epub_content BYTEA`, `deleted_at`), `book_files` (cover, `UNIQUE(book_id)`), `subscription_plans` (single row), `subscriptions`, `book_orders` (`UNIQUE(idempotency_key)`), `subscription_orders` (`UNIQUE(idempotency_key)`), `purchases` (`UNIQUE(user_id, book_id)`).
 Columns added beyond the PRD:
 - `users.pin_failed_attempts INT` and `users.pin_locked_until TIMESTAMPTZ` for E12. These live in the DB, not Redis (D3).
@@ -96,3 +96,11 @@ One file per domain layer (`controller.go`, `service.go`, `repository.go` plus `
 
 ## Tech-debt entries this plan will add
 EPUB/cover stored in the DB · no pagination · HS256 shared secret · in-process scheduler · no rate limit on `/auth/login` (only the PIN has a lockout) · mocked auth and payment
+
+## Deviations from this plan (made during implementation)
+- Phase 1: one initial migration file instead of one per table. It is the first schema and is applied as a unit.
+- Phase 0/1: `pkg/orm` gained `WithTx`, `NewPostgresDSN`, `ErrDuplicate`/`ErrStateChanged` and `IsUniqueViolation` (planned as untouched).
+- Dev/test Postgres runs on **:5433**, because a local Postgres already owned :5432.
+- `/auth/refresh` serves both apps; the admin app has no separate refresh endpoint.
+- `GET /books/:id/cover` accepts parent **and** admin tokens, so the admin app can show covers.
+- Additional removals: unused resty HTTP client and the `Restful` mock (they failed `go vet`).
