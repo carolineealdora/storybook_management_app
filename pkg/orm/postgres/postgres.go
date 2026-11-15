@@ -25,16 +25,23 @@ func NewPostgresConnection(conn sql.Connection, log logger.Logger) (sql.ORM, err
 		conn.Host, conn.Username, conn.Password, conn.DBName, conn.Port, conn.SSLMode, conn.Timezone,
 	)
 
+	return open(dsn, conn.ORMDebug)
+}
+
+// NewPostgresDSN connects with a raw DSN and a silent ORM logger (used by integration tests).
+func NewPostgresDSN(dsn string) (sql.ORM, error) {
+	return open(dsn, false)
+}
+
+func open(dsn string, debug bool) (sql.ORM, error) {
 	cfg := &gorm.Config{}
-	if !conn.ORMDebug {
+	if !debug {
 		cfg.Logger = gormlogger.Default.LogMode(gormlogger.Silent)
 	}
-
 	db, err := gorm.Open(postgres.Open(dsn), cfg)
 	if err != nil {
 		return nil, err
 	}
-
 	return &gormDB{db: db}, nil
 }
 

@@ -9,7 +9,12 @@ import (
 )
 
 // migrations is the apply order. Append new files; never reorder or rename applied ones.
-var migrations = []string{}
+var migrations = []string{
+	"20261116000001_create_storybook_schema",
+}
+
+// Ordered returns the migration names in apply order.
+func Ordered() []string { return append([]string(nil), migrations...) }
 
 func NewMigration(holder models.SharedHolder) postgres.Migrator {
 	scripts := map[string]postgres.SQLMigration{}

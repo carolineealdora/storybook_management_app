@@ -26,9 +26,15 @@ func main() {
 		case "migrate":
 			migrate(shared, args)
 			return
+		case "seed":
+			if err := migrations.Seed(shared.Sql, shared.Config); err != nil {
+				shared.Log.Fatal(err)
+			}
+			shared.Log.Info("seed complete")
+			return
 		case "run":
 		default:
-			fmt.Println("unknown command; use: run | migrate up|down|create <name>")
+			fmt.Println("unknown command; use: run | seed | migrate up|down|create <name>")
 			return
 		}
 	}

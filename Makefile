@@ -14,14 +14,15 @@ test:
 
 # Needs Postgres (make db-up). Uses TEST_DB_DSN or the default below.
 test-integration:
-	go test -tags=integration -race -count=1 ./internal/repositories/...
+	go test -tags=integration -race -count=1 -p 1 ./internal/repositories/...
 
 db-up:
-	docker run -d --name storybook-pg -p 5432:5432 -e POSTGRES_PASSWORD=postgres -e POSTGRES_DB=storybook postgres:16
+	docker run -d --name storybook-pg -p 5433:5432 -e POSTGRES_PASSWORD=postgres -e POSTGRES_DB=storybook postgres:16
+	sleep 3 && docker exec storybook-pg psql -U postgres -c "CREATE DATABASE storybook_test"
 
 lint:
-	go vet ./...
-	golangci-lint run ./...
+	go vet -tags=integration ./...
+	golangci-lint run --build-tags=integration ./...
 
 build:
 	go build -o bin/app .
