@@ -22,6 +22,10 @@ type (
 		Create(book *models.Book, cover *models.BookFile) error
 		Update(book *models.Book, cover *models.BookFile) error // nil EpubContent / cover = keep stored file
 		SoftDelete(id string, at time.Time) error
+
+		ListPublished() ([]models.Book, error)
+		GetWithContent(id string) (*models.Book, error)
+		GetCover(bookID string) (*models.BookFile, error)
 	}
 
 	Repo struct {
@@ -111,4 +115,31 @@ func (r *Repo) SoftDelete(id string, at time.Time) error {
 
 func escapeLike(s string) string {
 	return strings.NewReplacer(`\`, `\\`, `%`, `\%`, `_`, `\_`).Replace(s)
+}
+
+// ListPublished returns the showcase: published, not deleted, newest first, without EPUB bytes.
+func (r *Repo) ListPublished() ([]models.Book, error) {
+	var books []models.Book
+	if _, err := r.db.Table("books").Select(columns).
+		Where("status = ? AND deleted_at IS NULL", models.BookPublished).Order("created_at DESC").All(&books); err != nil {
+		return nil, err
+	}
+	return books, nil
+}
+
+// GetWithContent is the only query that loads epub_content; call it only after deciding to stream.
+func (r *Repo) GetWithContent(id string) (*models.Book, error) {
+	var b models.Book
+	if err := r.db.Where("id = ?", id).First(&b); err != nil {
+		return nil, err
+	}
+	return &b, nil
+}
+
+func (r *Repo) GetCover(bookID string) (*models.BookFile, error) {
+	var f models.BookFile
+	if err := r.db.Where("book_id = ?", bookID).First(&f); err != nil {
+		return nil, err
+	}
+	return &f, nil
 }

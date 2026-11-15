@@ -41,3 +41,29 @@ type AdminBookListQuery struct {
 }
 
 func (q AdminBookListQuery) Validate() interface{} { return q }
+
+// BookCard is a showcase item. Child view hides price on the client (PLAN D7).
+type BookCard struct {
+	ID       string `json:"id"`
+	Title    string `json:"title"`
+	Author   string `json:"author"`
+	AgeType  string `json:"age_type"`
+	AgeMin   int    `json:"age_min"`
+	AgeMax   *int   `json:"age_max"`
+	AgeLabel string `json:"age_label"`
+	Price    int    `json:"price"`
+	IsFree   bool   `json:"is_free"`
+	Access   string `json:"access"` // free | owned | subscribed | locked
+	CoverURL string `json:"cover_url"`
+}
+
+type BookDetail struct {
+	BookCard
+	Description string `json:"description"`
+}
+
+type MyBook struct {
+	BookCard
+	PricePaid   int       `json:"price_paid"`
+	PurchasedAt time.Time `json:"purchased_at"`
+}

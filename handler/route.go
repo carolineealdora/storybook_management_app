@@ -7,6 +7,7 @@ import (
 	"codebase/handler/controllers/account"
 	"codebase/handler/controllers/adminbook"
 	"codebase/handler/controllers/auth"
+	"codebase/handler/controllers/book"
 	"codebase/handler/controllers/healthcheck"
 	"codebase/handler/controllers/subscription"
 	"codebase/internal/constant/key"
@@ -52,6 +53,7 @@ func InitRoute(sharedHolder *models.SharedHolder) {
 	authCtrl := auth.NewController(sharedHolder)
 	accountCtrl := account.NewController(sharedHolder)
 	adminBookCtrl := adminbook.NewController(sharedHolder)
+	bookCtrl := book.NewController(sharedHolder)
 	subscriptionCtrl := subscription.NewController(sharedHolder)
 
 	parentOnly := helpers.RequireAccount(sharedHolder, models.AccountParent)
@@ -71,6 +73,12 @@ func InitRoute(sharedHolder *models.SharedHolder) {
 	me.PUT("/pin", accountCtrl.PutPin)
 	me.POST("/pin/verify", accountCtrl.VerifyPin)
 	me.POST("/pin/forgot", accountCtrl.ForgotPin)
+	me.GET("/books", bookCtrl.MyBooks)
+
+	v1.GET("/books", bookCtrl.List, parentOnly)
+	v1.GET("/books/:id", bookCtrl.Get, parentOnly)
+	v1.GET("/books/:id/cover", bookCtrl.Cover, helpers.RequireAccount(sharedHolder, models.AccountParent, models.AccountAdmin))
+	v1.GET("/books/:id/content", bookCtrl.Content, parentOnly)
 
 	// --- Book Management app (admin) ---
 	admin := v1.Group("/admin")

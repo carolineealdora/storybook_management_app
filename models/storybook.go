@@ -182,3 +182,10 @@ func (b Book) AgeLabel() string {
 
 // CoverURL is the API path serving the book's cover image.
 func (b Book) CoverURL() string { return "/api/v1/books/" + b.ID + "/cover" }
+
+// OwnedBook is a purchased book joined with its purchase (My Book).
+type OwnedBook struct {
+	Book
+	PricePaid   int       `gorm:"column:price_paid"`
+	PurchasedAt time.Time `gorm:"column:purchased_at"`
+}
