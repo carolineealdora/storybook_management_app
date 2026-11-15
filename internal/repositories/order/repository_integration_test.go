@@ -3,15 +3,18 @@
 package order
 
 import (
+	"sync"
 	"testing"
 	"time"
 
 	"codebase/internal/repositories/testdb"
+	"codebase/models"
 	sql "codebase/pkg/orm"
 
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"gorm.io/gorm"
 )
 
 type env struct {
@@ -76,4 +79,105 @@ func TestMyBooks_NoPurchases_Empty(t *testing.T) {
 	mine, err := e.repo.ListMyBooks(e.userID)
 	require.NoError(t, err)
 	assert.Empty(t, mine)
+}
+
+func (e env) pendingOrder(t *testing.T, bookID, key string, price int) *models.BookOrder {
+	o := &models.BookOrder{UserID: e.userID, BookID: bookID, Price: price, Status: models.OrderPending, IdempotencyKey: key, CreatedAt: time.Now(), UpdatedAt: time.Now()}
+	require.NoError(t, e.repo.CreateBookOrder(o))
+	return o
+}
+
+func TestCreateBookOrder_SameKeySameUser_ReturnsErrDuplicate(t *testing.T) {
+	e := setup(t)
+	b := e.book(t, "Cat", 15000)
+	e.pendingOrder(t, b, "k1", 15000)
+	err := e.repo.CreateBookOrder(&models.BookOrder{UserID: e.userID, BookID: b, Price: 15000, Status: models.OrderPending, IdempotencyKey: "k1"})
+	assert.ErrorIs(t, err, sql.ErrDuplicate)
+}
+
+func TestGetBookOrder_OtherUser_NotFound(t *testing.T) {
+	e := setup(t)
+	o := e.pendingOrder(t, e.book(t, "Cat", 15000), "k1", 15000)
+	_, err := e.repo.GetBookOrder(o.ID, uuid.NewString())
+	assert.ErrorIs(t, err, gorm.ErrRecordNotFound)
+	got, err := e.repo.GetBookOrder(o.ID, e.userID)
+	require.NoError(t, err)
+	assert.Equal(t, models.OrderPending, got.Status)
+}
+
+func TestMarkBookOrderPaid_CreatesPurchase_SecondCallStateChanged(t *testing.T) {
+	e := setup(t)
+	b := e.book(t, "Cat", 15000)
+	o := e.pendingOrder(t, b, "k1", 12000)
+	require.NoError(t, e.repo.MarkBookOrderPaid(o, time.Now()))
+	assert.ErrorIs(t, e.repo.MarkBookOrderPaid(o, time.Now()), sql.ErrStateChanged)
+
+	mine, err := e.repo.ListMyBooks(e.userID)
+	require.NoError(t, err)
+	require.Len(t, mine, 1)
+	assert.Equal(t, 12000, mine[0].PricePaid, "purchase stores the order price")
+}
+
+func TestMarkBookOrderPaid_SecondOrderSameBook_ErrDuplicateAndRolledBack(t *testing.T) {
+	e := setup(t)
+	b := e.book(t, "Cat", 15000)
+	first, second := e.pendingOrder(t, b, "k1", 15000), e.pendingOrder(t, b, "k2", 15000)
+	require.NoError(t, e.repo.MarkBookOrderPaid(first, time.Now()))
+	assert.ErrorIs(t, e.repo.MarkBookOrderPaid(second, time.Now()), sql.ErrDuplicate)
+
+	got, err := e.repo.GetBookOrder(second.ID, e.userID)
+	require.NoError(t, err)
+	assert.Equal(t, models.OrderPending, got.Status, "paid flag rolled back with the failed purchase insert")
+}
+
+func TestMarkBookOrderPaid_ConcurrentDoubleTap_ExactlyOneWins(t *testing.T) {
+	e := setup(t)
+	o := e.pendingOrder(t, e.book(t, "Cat", 15000), "k1", 15000)
+	const n = 10
+	errs := make(chan error, n)
+	var wg sync.WaitGroup
+	for i := 0; i < n; i++ {
+		wg.Add(1)
+		go func() { defer wg.Done(); errs <- e.repo.MarkBookOrderPaid(o, time.Now()) }()
+	}
+	wg.Wait()
+	close(errs)
+	ok := 0
+	for err := range errs {
+		if err == nil {
+			ok++
+		} else {
+			assert.ErrorIs(t, err, sql.ErrStateChanged)
+		}
+	}
+	assert.Equal(t, 1, ok)
+	ids, err := e.repo.PurchasedBookIDs(e.userID)
+	require.NoError(t, err)
+	assert.Len(t, ids, 1)
+}
+
+func TestMarkBookOrderFailed_PendingOnly(t *testing.T) {
+	e := setup(t)
+	o := e.pendingOrder(t, e.book(t, "Cat", 15000), "k1", 15000)
+	require.NoError(t, e.repo.MarkBookOrderFailed(o.ID, time.Now()))
+	assert.ErrorIs(t, e.repo.MarkBookOrderFailed(o.ID, time.Now()), sql.ErrStateChanged)
+	assert.ErrorIs(t, e.repo.MarkBookOrderPaid(o, time.Now()), sql.ErrStateChanged, "failed order cannot be paid; retry is a new order")
+}
+
+func TestListBookOrders_NewestFirstWithTitle(t *testing.T) {
+	e := setup(t)
+	b := e.book(t, "Cat", 15000)
+	first := e.pendingOrder(t, b, "k1", 15000)
+	require.NoError(t, e.repo.MarkBookOrderFailed(first.ID, time.Now()))
+	second := e.pendingOrder(t, b, "k2", 15000)
+	require.NoError(t, e.db.Exec(`UPDATE book_orders SET created_at = NOW() + INTERVAL '1 second' WHERE id = ?`, second.ID))
+	require.NoError(t, e.repo.MarkBookOrderPaid(second, time.Now()))
+
+	rows, err := e.repo.ListBookOrders(e.userID)
+	require.NoError(t, err)
+	require.Len(t, rows, 2)
+	assert.Equal(t, second.ID, rows[0].ID)
+	assert.Equal(t, models.OrderPaid, rows[0].Status)
+	assert.Equal(t, models.OrderFailed, rows[1].Status)
+	assert.Equal(t, "Cat", rows[0].BookTitle)
 }
