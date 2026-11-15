@@ -1,6 +1,6 @@
 module codebase
 
-go 1.26.0
+go 1.22
 
 require (
 	github.com/caarlos0/env/v10 v10.0.0
@@ -52,10 +52,10 @@ require (
 	go.elastic.co/apm/module/apmhttp/v2 v2.4.8 // indirect
 	go.elastic.co/apm/v2 v2.4.8 // indirect
 	go.elastic.co/fastjson v1.1.0 // indirect
-	golang.org/x/crypto v0.59.0
-	golang.org/x/net v0.62.0 // indirect
-	golang.org/x/sys v0.50.0 // indirect
-	golang.org/x/text v0.44.0 // indirect
+	golang.org/x/crypto v0.31.0
+	golang.org/x/net v0.33.0 // indirect
+	golang.org/x/sys v0.28.0 // indirect
+	golang.org/x/text v0.21.0 // indirect
 	golang.org/x/time v0.6.0 // indirect
 	gorm.io/driver/postgres v1.3.10
 	gorm.io/gorm v1.23.10
