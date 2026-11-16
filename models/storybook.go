@@ -98,6 +98,8 @@ type PlanPriceChange struct {
 	NewPrice  int       `gorm:"column:new_price"`
 	ChangedBy string    `gorm:"column:changed_by"`
 	ChangedAt time.Time `gorm:"column:changed_at"`
+	// ChangedByName is read-only, joined from admins.name.
+	ChangedByName *string `gorm:"column:changed_by_name;->"`
 }
 
 func (PlanPriceChange) TableName() string { return "subscription_plan_price_history" }

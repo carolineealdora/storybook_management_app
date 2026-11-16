@@ -42,9 +42,15 @@ func (s *ServiceImpl) GetAdminPlan() (*dto.AdminPlanView, error) {
 	if err != nil {
 		return nil, s.errors.Wrap(respConst.GENERAL_ERROR, err.Error())
 	}
-	v := &dto.AdminPlanView{PlanView: *toPlanView(p), UpdatedBy: p.UpdatedBy, PriceHistory: make([]dto.PlanPriceChangeView, 0, len(rows))}
+	active, err := s.subs.CountActiveSubscribers(s.now())
+	if err != nil {
+		return nil, s.errors.Wrap(respConst.GENERAL_ERROR, err.Error())
+	}
+	v := &dto.AdminPlanView{PlanView: *toPlanView(p), UpdatedBy: p.UpdatedBy, ActiveSubscriberCount: active,
+		PriceHistory: make([]dto.PlanPriceChangeView, 0, len(rows))}
 	for _, h := range rows {
-		v.PriceHistory = append(v.PriceHistory, dto.PlanPriceChangeView{ID: h.ID, OldPrice: h.OldPrice, NewPrice: h.NewPrice, ChangedBy: h.ChangedBy, ChangedAt: h.ChangedAt})
+		v.PriceHistory = append(v.PriceHistory, dto.PlanPriceChangeView{ID: h.ID, OldPrice: h.OldPrice, NewPrice: h.NewPrice,
+			ChangedBy: h.ChangedBy, ChangedByName: h.ChangedByName, ChangedAt: h.ChangedAt})
 	}
 	return v, nil
 }

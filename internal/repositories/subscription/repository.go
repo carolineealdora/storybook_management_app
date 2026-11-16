@@ -1,6 +1,8 @@
 package subscription
 
 import (
+	"time"
+
 	"codebase/models"
 	sql "codebase/pkg/orm"
 
@@ -13,6 +15,7 @@ type (
 		GetPlan() (*models.SubscriptionPlan, error)
 		SavePlan(p *models.SubscriptionPlan) error
 		ListPriceHistory(planID string) ([]models.PlanPriceChange, error)
+		CountActiveSubscribers(now time.Time) (int, error)
 	}
 
 	Repo struct {
@@ -61,10 +64,21 @@ func (r *Repo) SavePlan(p *models.SubscriptionPlan) error {
 	})
 }
 
-// ListPriceHistory returns the plan's price changes, newest first.
+// ListPriceHistory returns the plan's price changes, newest first, with the editing admin's name.
 func (r *Repo) ListPriceHistory(planID string) ([]models.PlanPriceChange, error) {
 	var rows []models.PlanPriceChange
-	err := r.db.RawSql(`SELECT id, plan_id, old_price, new_price, changed_by, changed_at FROM subscription_plan_price_history
-		WHERE plan_id = ? ORDER BY changed_at DESC`, &rows, planID)
+	err := r.db.RawSql(`SELECT h.id, h.plan_id, h.old_price, h.new_price, h.changed_by, h.changed_at, a.name AS changed_by_name
+		FROM subscription_plan_price_history h LEFT JOIN admins a ON a.id = h.changed_by
+		WHERE h.plan_id = ? ORDER BY h.changed_at DESC`, &rows, planID)
 	return rows, err
+}
+
+// CountActiveSubscribers counts periods that are active and not yet expired: the same rule as the
+// Subscribed badge (CR-001-1 B1). uq_subscriptions_one_active makes it one per user.
+func (r *Repo) CountActiveSubscribers(now time.Time) (int, error) {
+	var n []int
+	if err := r.db.RawSql(`SELECT COUNT(*) FROM subscriptions WHERE status = 'active' AND expires_at > ?`, &n, now); err != nil {
+		return 0, err
+	}
+	return n[0], nil
 }
