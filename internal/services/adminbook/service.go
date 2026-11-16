@@ -51,8 +51,21 @@ func (s *ServiceImpl) List(search, status string) ([]dto.AdminBook, error) {
 		return nil, s.errors.Wrap(respConst.GENERAL_ERROR, err.Error())
 	}
 	out := make([]dto.AdminBook, 0, len(books))
+	if len(books) == 0 {
+		return out, nil
+	}
+	ids := make([]string, len(books))
+	for i, b := range books {
+		ids[i] = b.ID
+	}
+	counts, err := s.books.PurchaseCounts(ids)
+	if err != nil {
+		return nil, s.errors.Wrap(respConst.GENERAL_ERROR, err.Error())
+	}
 	for _, b := range books {
-		out = append(out, toAdminBook(b))
+		v := toAdminBook(b)
+		v.PurchaseCount = counts[b.ID]
+		out = append(out, v)
 	}
 	return out, nil
 }
@@ -62,10 +75,16 @@ func (s *ServiceImpl) Get(id string) (*dto.AdminBook, error) {
 	if err != nil {
 		return nil, err
 	}
+	counts, err := s.books.PurchaseCounts([]string{id})
+	if err != nil {
+		return nil, s.errors.Wrap(respConst.GENERAL_ERROR, err.Error())
+	}
 	v := toAdminBook(*b)
+	v.PurchaseCount = counts[id]
 	return &v, nil
 }
 
+// Create returns the new book with PurchaseCount 0: nobody can own it yet.
 func (s *ServiceImpl) Create(in dto.BookInput) (*dto.AdminBook, error) {
 	if in.Cover == nil || in.Epub == nil {
 		return nil, s.errors.Wrap(respConst.VALIDATION_ERROR, "cover and epub files are required.")
