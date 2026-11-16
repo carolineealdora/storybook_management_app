@@ -29,7 +29,7 @@ The main users are toddlers (1–3 years old) and preschoolers (3–6 years old)
 2. Logout
 3. Parent and child view modes
 4. View mode toggle with a PIN
-5. Subscriber / non-subscriber badge
+5. Account badge: Subscribed / Free (CR-001)
 6. Book showcase (home)
 7. Book detail page
 8. My Book page
@@ -144,8 +144,8 @@ The main users are toddlers (1–3 years old) and preschoolers (3–6 years old)
 - [ ]  Given a book the user cannot access (user not purchased and has no active subscription), then a lock icon is shown at the bottom right of the cover.
 - [ ]  Given the user has an active subscription, then no paid book shows a lock icon.
 - [ ]  Free books show a “Free” label and never show a lock icon.
-- [ ]  The header shows a Subscriber / Non-subscriber badge at the top left and the Subscription button at the top right, next to the view mode toggle.
-- [ ]  The Subscription button only shown if the account state is Free (Non-Subscriber)
+- [ ]  The header shows the account badge (**Subscribed** / **Free**, CR-001) at the top left and the Subscription button at the top right, next to the view mode toggle.
+- [ ]  The Subscription button only shown if the account state is Free
 - [ ]  Given a book is set to inactive in back-office, then the book does not shown in the digital storybook app.
 - [ ]  The footer shows Home, My Book (middle), and Settings.
 
@@ -157,13 +157,13 @@ The main users are toddlers (1–3 years old) and preschoolers (3–6 years old)
 
 - [ ]  Home shows the same books as Parent view, with cover, title, and age range.
 - [ ]  Price, book description, Buy Now, Checkout, Payment, Subscription button, and Settings are **not** shown.
-- [ ]  Paid books that are not purchased show a lock icon when the account is in the Free (Non-subscriber) state.
+- [ ]  Paid books that are not purchased show a lock icon when the account is in the Free state.
 - [ ]  Free books show a “Free” label and no lock icon.
 - [ ]  The lock icon is placed at the bottom right so it does not cover the main part of the illustration.
 - [ ]  The footer shows Home and My Book.
 - [ ]  Given an unlocked book (free, purchased, or covered by an active subscription), when the child taps it, then the book opens in the Book Viewer.
 - [ ]  Given a locked book, when the child taps it, then the book does not open and a friendly, price-free message is shown (e.g. “Ask your parent to unlock this book”).
-- [ ]  The Subscriber / Non-subscriber badge is still shown at the top left of the header.
+- [ ]  The Subscribed / Free badge is still shown at the top left of the header.
 
 ### US-06 — View Book Detail
 
@@ -200,7 +200,7 @@ The main users are toddlers (1–3 years old) and preschoolers (3–6 years old)
 - [ ]  My Book lists only purchased books, newest first. Free books and books unlocked by the subscription are not listed.
 - [ ]  In Child view, My Book shows cover, title, and age range only (no price).
 - [ ]  Purchased books have no expiry date.
-- [ ]  Purchased books stay in My Book when the account changes between Free and Premium (subscription started, renewed, or cancelled).
+- [ ]  Purchased books stay in My Book when the account changes between Free and Subscribed (subscription started, renewed, or cancelled).
 - [ ]  Given no purchases yet, then an empty state is shown with a button to go to Home.
 
 ### US-09 — Buy a Single Book
@@ -225,7 +225,7 @@ The main users are toddlers (1–3 years old) and preschoolers (3–6 years old)
 **Acceptance criteria:**
 
 - [ ]  Given Parent view and no active subscription, when the parent taps the Subscription button (header) or the subscription prompt (book detail page), then the Subscription page shows the benefits, the monthly price (set by admin), and a Checkout button.
-- [ ]  Given payment succeeds (mocked), then the subscription becomes **Active** with an expiry date one month from the start, the badge changes to **Subscriber**, and all published books are unlocked immediately.
+- [ ]  Given payment succeeds (mocked), then the subscription becomes **Active** with an expiry date one month from the start, the badge changes to **Subscribed**, and all published books are unlocked immediately.
 - [ ]  Given payment fails, then no subscription is created and the parent can retry.
 - [ ]  Given an active subscription, then the Subscription page shows the current plan, next renewal date, and a Cancel button instead of Checkout.
 - [ ]  Given date reached the expiry date, then system will automatically renew the subscription and it will always shows succeeds (mocked).
@@ -237,7 +237,7 @@ The main users are toddlers (1–3 years old) and preschoolers (3–6 years old)
 **Acceptance criteria:**
 
 - [ ]  Given an active subscription, when the parent taps Cancel, then a confirmation dialog states that access to books they did not purchase stops immediately and no refund is given (out of scope).
-- [ ]  Given the parent confirms, then the status changes to **Cancelled** immediately, auto-renewal stops, the badge changes to **Non-subscriber**, and non-owned paid books are locked again.
+- [ ]  Given the parent confirms, then the status changes to **Cancelled** immediately, auto-renewal stops, the badge changes to **Free**, and non-owned paid books are locked again.
 - [ ]  Purchased books stay in My Book after cancelling.
 - [ ]  After cancelling, the Subscription button is shown in the header again so the parent can resubscribe.
 - [ ]  Given the parent closes the dialog without confirming, then the subscription stays **Active**.
@@ -314,7 +314,8 @@ The main users are toddlers (1–3 years old) and preschoolers (3–6 years old)
 
 - [ ]  The admin can set the monthly price (IDR, whole number > 0) and the benefits text.
 - [ ]  Changes are shown on the Subscription page for new subscriptions.
-- [ ]  Active subscriptions keep the price they paid until they expire.
+- [ ]  Active subscriptions keep the price they paid until they expire; the next automatic renewal charges the price current at that moment (CR-001).
+- [ ]  Every price change is recorded in a price history (old price, new price, admin, time) shown on the plan page; saving the same price records nothing (CR-001).
 
 ---
 
@@ -379,7 +380,7 @@ flowchart TD
     F -->|Failed| G[No subscription created]
     G -->|Retry| C
     F -->|Success| H[Subscription = Active<br/>renews in 1 month]
-    H --> I[Badge = Subscriber<br/>All published books unlocked]
+    H --> I[Badge = Subscribed<br/>All published books unlocked]
     I --> J{Renewal date reached<br/>and not cancelled?}
     J -->|Yes| K[Auto-renew - mocked, always succeeds<br/>New Active period created<br/>Previous period = Expired]
     K --> I
@@ -394,7 +395,7 @@ flowchart TD
     C --> D[Confirmation dialog<br/>access stops immediately, no refund]
     D -->|Keep subscription| B
     D -->|Confirm| E[Status = Cancelled<br/>auto-renew stopped]
-    E --> F[Badge = Non-subscriber<br/>Subscription button shown again]
+    E --> F[Badge = Free<br/>Subscription button shown again]
     F --> G[Non-owned paid books locked<br/>Purchased books stay in My Book]
 ```
 
@@ -465,7 +466,7 @@ flowchart TD
 - **Covers first for children.** The lock icon sits at the bottom right and the age range at the top left, so the illustration stays the focus.
 - **Locked vs unlocked is obvious at a glance.** One consistent lock icon (never a price tag on the cover), a “Free” label on free books, and clear buttons on the detail page (Buy Now, Subscribed, Read).
 - **Subscription is the easy path.** Books are bought one at a time, and every locked book’s detail page shows the subscription offer next to Buy Now.
-- **Status is always visible.** The Subscriber / Non-subscriber badge is shown in the header in both views.
+- **Status is always visible.** The Subscribed / Free badge is shown in the header in both views.
 - **Unlock immediately.** After a successful purchase or subscription, content unlocks without a manual refresh.
 - **Tablet- and mobile-first.** Large touch targets (at least 48 × 48 px) for small hands; layouts work in portrait and landscape.
 - **Every action has loading, empty, success, and error states.**
@@ -494,31 +495,36 @@ flowchart TD
 
 ### 12.1 Architecture
 
+> **As built.** §12.2–12.4 are the design written before the build. The implemented contracts are in each backend's `docs/API-contracts.md` and in `docs/DATA-MODELS.md` (storybook_management_app). Changes made during the build: two backends instead of one (below); CR-001 added `subscription_plan_price_history` and `409 PRICE_CHANGED`; payment and settings routes need a parent token (`X-Parent-Token`) issued by login, PIN or Forgot PIN; library lists are paginated (`page`, `page_size`); Forgot PIN locks for 1 minute after 4 wrong passwords.
+
 ```mermaid
 flowchart LR
-    subgraph Clients
-        L["Digital Storybook Library app<br/>(Lovable) - Parent & Child view"]
-        M["Book Management app<br/>(Lovable) - Admin"]
+    subgraph Clients["Frontends (React + Vite, built with Claude Code)"]
+        L["Digital Storybook Library app<br/>fe_storybook_library_app<br/>Parent & Child view"]
+        M["Book Management app<br/>fe_storybook_management_app<br/>Admin"]
     end
-    subgraph API["Backend API (Go)"]
-        H["Handler<br/>HTTP, input validation,<br/>JWT and role check"]
-        S["Service<br/>access check, single-book checkout,<br/>mocked payment, subscription lifecycle"]
-        R["Repository<br/>reads and writes PostgreSQL"]
-        J["Scheduler<br/>daily auto-renew job (mocked)"]
-        H --> S --> R
-        J --> S
+    subgraph LA["storybook_library_app (Go)"]
+        LH["Handler → Service → Repository<br/>parent auth, PIN, showcase, access check,<br/>orders, mocked payment, subscriptions"]
+        LJ["Renewal job<br/>hourly, mocked, always succeeds"]
     end
-    DB[("PostgreSQL<br/>app data + book files<br/>(EPUB and covers)")]
-    L -->|REST + JWT| H
-    M -->|REST + JWT| H
-    R --> DB
+    subgraph MA["storybook_management_app (Go)"]
+        MH["Handler → Service → Repository<br/>admin auth, book CRUD + uploads,<br/>plan price + price history"]
+        MM["Migrations + seed<br/>owns the schema"]
+    end
+    DB[("PostgreSQL 16<br/>one shared database<br/>app data + EPUB and covers")]
+    L -->|REST + JWT| LH
+    M -->|REST + JWT, same origin| MH
+    LH --> DB
+    LJ --> DB
+    MH --> DB
+    MM -.->|schema| DB
 ```
 
-- **Handler** — receives HTTP requests, validates input, checks JWT and role (parent / admin, from `credentials.account_type`).
-- **Service** — business rules: access check, single-book checkout, mocked payment, subscription lifecycle.
-- **Repository** — reads and writes PostgreSQL, including book files.
-- **Scheduler** — daily job that auto-renews active, non-cancelled subscriptions on their renewal date (mocked, always succeeds).
-- **Access check order:** book exists & published → free → purchased → active subscription → locked.
+- **One backend per frontend** (ADR-011). Each backend logs in only its own account type, and `/auth/refresh` rejects the other app's tokens, so a parent cannot reach admin routes and an admin cannot reach parent routes.
+- **One shared database** (ADR-010). storybook_management_app owns the migrations; the library backend runs none. The admin backend writes books, covers, the plan and its price history; the library backend writes PINs and lockouts, orders, purchases and subscriptions.
+- **Layers in each backend:** Handler (bind and validate input, JWT and role check, map errors to codes) → Service (every PRD rule) → Repository (SQL and transactions).
+- **Renewal job** runs only in storybook_library_app, every hour. It renews active, non-cancelled subscriptions whose period has ended, at the current plan price (mocked, always succeeds).
+- **Access check order:** book exists & published → free → purchased → active subscription → locked. A purchased book stays readable after it is unpublished or deleted (E5).
 - Locked content is never sent to the client; the EPUB is streamed from the database only after the access check passes.
 
 ### 12.2 Data Model
@@ -653,7 +659,7 @@ erDiagram
 
 ### 12.3 API Endpoints
 
-**Digital Storybook Library app**
+**Digital Storybook Library app** (served by storybook_library_app)
 
 | Method | Endpoint | Auth | Description |
 | --- | --- | --- | --- |
@@ -679,7 +685,7 @@ erDiagram
 | POST | `/subscriptions/current/cancel` | User | Cancel active subscription; access stops immediately |
 | GET | `/subscriptions` | User | Subscription History (periods with their subscription orders) |
 
-**Book Management app**
+**Book Management app** (served by storybook_management_app)
 
 | Method | Endpoint | Auth | Description |
 | --- | --- | --- | --- |
@@ -751,14 +757,21 @@ erDiagram
 | PRD review | Claude | Check draft for inconsistencies and unclear points | Cart had quantity for digital books; no parent gate on view toggle; subscription vs purchase rules unclear; unfinished sentences | Removed quantity; added PIN on Child → Parent switch; added “Subscribed” rule and no-expiry rule for purchases |
 | Translation & structure | Claude | Translate Indonesian notes to English and restructure feature list | Mixed languages; repeated lock rules in both views | Rewrote in English; grouped shared rules under Global Layout |
 | Scope | Claude | Build in-scope and out-of-scope feature lists | Sign-up, forgot password, and book management were missing | Decided sign-up/forgot password are out of scope; added Master Book and Subscription Configuration to scope |
-| PRD sections 7–18 | Claude | Draft user stories, edge cases, flows, design, metrics, roadmap, risks from my notes | [ ] | [ ] |
+| PRD sections 7–18 | Claude | Draft user stories, edge cases, flows, design, metrics, roadmap, risks from my notes | The draft still had a cart, left open questions (cancellation, PIN setup, age range, settings scope, file storage) and used one `orders` table and one `users` table for everyone | Fixed in the next three rows |
 | Remove cart | Claude | Update PRD so parents buy books one at a time | Cart was referenced in user stories, edge cases, flows, data model, API, metrics, and risks | Replaced cart with single-book Buy Now; added subscription prompt on book detail; updated all related sections |
 | Apply open-question answers | Claude | Update PRD with my answers, move my trade-off notes into section 11, convert flows and system design to Mermaid | Cancellation, PIN setup, age range format, settings scope, and file storage were affected across many sections | Updated user stories, edge cases, API, data model, risks; removed Open Questions; added Mermaid diagrams |
 | Data model changes | Claude | Split login data, users/admins, and book/subscription orders; keep only covers in `book_files` | Combined `orders` table and shared `users` table mixed parents, admins, and login data | Added `credentials`, `admins`, `book_orders`, `subscription_orders`; moved EPUB into `books`; updated API, stories, metrics, risks |
-| Backend scaffold | [Claude Code] | [ ] | [ ] | [ ] |
-| Frontend | [Lovable] | [ ] | [ ] | [ ] |
+| Management backend | Claude Code | “Based on the PRD and the scaffold in this folder, create me the backend service.” The project rules in CLAUDE.md made it write a plan first (`PLAN.md`, decisions D1–D10 that I approved), write failing tests before code, commit tests and code separately, run `make done` before every commit and log every shortcut in `tech-debt.md` | Planning found scaffold bugs: `Makefile` was a directory, migrations ran in random order (Go map iteration), a listed migration file was missing, a request logger wrote passwords and tokens to Mongo, and every route required an unrelated `x-partner-id` header | Fixed all of them in Phase 0 before any feature work; shortcuts logged as TD-1…TD-10; services have 88–94% test coverage and repositories are tested against a real Postgres |
+| Library backend | Claude Code | Same prompt for the parent app; then “what can we do next? is this all?” and I chose items from its gap list: harden the PIN gate, add pagination, limit Forgot PIN tries | The scaffold carried Redis, Mongo and a sample payment module, and a request logger that wrote passwords and tokens to logs; its error type returned an empty message; migrations ran in random order. Review found the PIN only gated the UI (a child with the parent's session could call payment endpoints), lists had no pagination, and Forgot PIN allowed unlimited password guesses | Removed unused infra and the body logger; fixed the error type and migration order; payment and settings routes now need a parent token issued only by login, PIN or Forgot PIN; added `page`/`page_size` with totals; Forgot PIN locks for 1 minute after 4 wrong passwords; every edge case E1–E22 is tested (E20 in unit tests, the rest end-to-end over HTTP against Postgres) |
+| Change request CR-001 | Claude Code | “CR-001 is a change request on top of the existing implementation. Before writing code: list every file, table, endpoint and UI screen that changes, flag conflicts with the code or PRD, propose a new migration, and wait for my approval” | 10 conflicts (C1–C10), e.g. CR-001 asked for a manual renew endpoint while the PRD auto-renews (C1), and what happens when the admin changes the price during a parent's checkout (C7) | I kept the mocked auto-renew and approved the rest as recommended: price history written in the same transaction as the price change, `expected_price` with `409 PRICE_CHANGED` at checkout and pay, Subscribed / Free badge |
+| Shared database | Claude Code | “Both backends should use the same database, so the migrations must stay in sync. The management app owns the schema; merge in the library app's changes. Write the plan” | Migration ids never matched; the library had columns (Forgot PIN lockout), a case-insensitive email index and FK indexes the owner lacked; it seeded demo accounts through a migration | One schema in storybook_management_app with the library changes merged in (ADR-010); seed accounts come from env vars; demo passwords left in git history are logged as TD-011 |
+| One backend per app | Claude Code | “fe_storybook_management_app calls this backend and fe_storybook_library_app calls storybook_library_app”: plan first, then implement | Review of both repos: each backend still served the other app's endpoints, so a parent could log in on the admin backend and pay without the parent token or the Forgot PIN lockout; a refresh token from either backend worked on the other | Each backend serves only its own frontend and refreshes only its own account type (ADR-011); a route test checks auth on every route |
+| Simpler tooling | Claude Code | “Remove CI, pre-commit hooks and extra lint/secret-scan tooling, and every mention of them from the instruction files. Find everything first and wait for my OK” | CI, pre-commit and golangci-lint were more setup than a short MVP needs, and the instruction files referred to gates that would no longer exist | One local gate, `make done` (vet, tests, build), before every commit; integration tests run locally with `make test-integration` |
+| Frontends (both apps) | Claude Design → Claude Code | Designed both apps as one design system from the PRD in Claude Design, then: “Import this Claude Design project (`MainStory Apps.dc.html`) and create the storybook library app for parent and kids” (and “… the management app for admin”), following a frontend CLAUDE.md | The agent could not read the design project, so I added the handoff .zip to `docs/design`; the admin app was first scaffolded in Next.js, which I didn't want; code review and Playwright e2e found an EPUB that failed silently, a book table that overflowed on phones, and notices that screen readers didn't announce | Retried from the local handoff; asked for React only, so it was rebuilt as a Vite + React Router single-page app; fixed each finding; added nginx + Docker hosting with security headers and CSP, Vitest unit tests and Playwright e2e against the real backend |
 
-**What I kept human-owned:** business rules (monthly-only subscription, one-book-at-a-time purchase to push subscriptions, no buying while subscribed, purchased books never expire, PIN gate, auto-renew, immediate cancellation, age range format, DB file storage), scope decisions, edge-case decisions, and review of access logic.
+**What I kept human-owned:** business rules (monthly-only subscription, one-book-at-a-time purchase to push subscriptions, no buying while subscribed, purchased books never expire, PIN gate, auto-renew, immediate cancellation, age range format, DB file storage), scope decisions, edge-case decisions, and review of access logic. I also approved every plan before code was written (D1–D10, C1–C10, S1–S7, R1–R8) and made the call to split into one backend per app.
+
+**How I steered Claude Code:** the CLAUDE.md rules (plan first, TDD, `make done` before every commit, tech-debt log, security rules) load in every session; each feature started as a written plan I annotated and approved; after each feature I asked “what else can we do?” and picked from its gap list.
 
 ---
 
