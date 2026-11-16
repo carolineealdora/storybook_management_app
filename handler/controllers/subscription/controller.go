@@ -21,9 +21,15 @@ func NewController(holder *models.SharedHolder) *Controller {
 	return &Controller{Response: helpers.NewResponse(holder), Binding: helpers.NewBinding(), Service: subscription.NewService(holder)}
 }
 
-// GetPlan serves both GET /subscription/plan (parent) and GET /admin/subscription-plan.
+// GetPlan serves GET /subscription/plan (parent paywall).
 func (c *Controller) GetPlan(ec echo.Context) error {
 	p, err := c.Service.GetPlan()
+	return c.respond(ec, 0, p, err)
+}
+
+// GetAdminPlan serves GET /admin/subscription-plan: the plan with its price history.
+func (c *Controller) GetAdminPlan(ec echo.Context) error {
+	p, err := c.Service.GetAdminPlan()
 	return c.respond(ec, 0, p, err)
 }
 
@@ -32,7 +38,7 @@ func (c *Controller) PutPlan(ec echo.Context) error {
 	if err := helpers.BindValid(c.Binding, ec, &req); err != nil {
 		return c.respond(ec, 0, nil, err)
 	}
-	p, err := c.Service.UpdatePlan(req.Price, req.Benefits)
+	p, err := c.Service.UpdatePlan(helpers.ClaimsFrom(ec).AdminID, req.Price, req.Benefits)
 	return c.respond(ec, 0, p, err)
 }
 
@@ -41,7 +47,7 @@ func (c *Controller) CreateOrder(ec echo.Context) error {
 	if err := helpers.BindValid(c.Binding, ec, &req); err != nil {
 		return c.respond(ec, 0, nil, err)
 	}
-	o, err := c.Service.CreateOrder(helpers.ClaimsFrom(ec).UserID, req.IdempotencyKey)
+	o, err := c.Service.CreateOrder(helpers.ClaimsFrom(ec).UserID, req.IdempotencyKey, req.ExpectedPrice)
 	return c.respond(ec, http.StatusCreated, o, err)
 }
 

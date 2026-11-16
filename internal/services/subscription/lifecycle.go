@@ -20,17 +20,18 @@ const (
 	renewBatch     = 500
 )
 
-// CreateOrder starts a new monthly subscription checkout at the current plan price (US-10, E3).
-func (s *ServiceImpl) CreateOrder(userID, idempotencyKey string) (*dto.SubscriptionOrderView, error) {
+// CreateOrder starts a new monthly subscription checkout at the current plan price (US-10, E3, CR-001-2 P3/P4).
+// expectedPrice is the price the paywall showed; a mismatch means the admin changed it meanwhile (E-CR1).
+func (s *ServiceImpl) CreateOrder(userID, idempotencyKey string, expectedPrice int) (*dto.SubscriptionOrderView, error) {
 	if err := s.ensureNotSubscribed(userID); err != nil {
 		return nil, err
 	}
-	plan, err := s.subs.GetPlan()
-	if errors.Is(err, gorm.ErrRecordNotFound) {
-		return nil, s.errors.Wrap(respConst.PLAN_NOT_FOUND, "no plan configured")
-	}
+	plan, err := s.plan()
 	if err != nil {
-		return nil, s.errors.Wrap(respConst.GENERAL_ERROR, err.Error())
+		return nil, err
+	}
+	if plan.Price != expectedPrice {
+		return nil, s.errors.Wrap(respConst.PRICE_CHANGED, fmt.Sprintf("paywall showed %d, plan is %d", expectedPrice, plan.Price))
 	}
 	now := s.now()
 	o := &models.SubscriptionOrder{UserID: userID, PlanID: plan.ID, OrderType: models.OrderTypeNew, Price: plan.Price,
@@ -58,6 +59,16 @@ func (s *ServiceImpl) PayOrder(userID, orderID, result string) (*dto.Subscriptio
 	}
 	if err := s.ensureNotSubscribed(userID); err != nil {
 		return nil, err
+	}
+	// E-CR1: the admin changed the price after checkout. The order stays pending and unused; the client
+	// shows the new price and checks out again with a new order.
+	// ponytail: checked outside the Activate transaction; a price edit in that millisecond window is charged at the order price.
+	plan, err := s.subs.GetPlan()
+	if err != nil {
+		return nil, s.errors.Wrap(respConst.GENERAL_ERROR, err.Error())
+	}
+	if plan.Price != o.Price {
+		return nil, s.errors.Wrap(respConst.PRICE_CHANGED, fmt.Sprintf("order %s at %d, plan now %d", o.ID, o.Price, plan.Price))
 	}
 
 	now := s.now()

@@ -11,6 +11,7 @@ import (
 // migrations is the apply order. Append new files; never reorder or rename applied ones.
 var migrations = []string{
 	"20261116000001_create_storybook_schema",
+	"20261117000001_cr001_plan_price_history",
 }
 
 // Ordered returns the migration names in apply order.

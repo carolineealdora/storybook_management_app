@@ -3,12 +3,20 @@ package dto
 import "time"
 
 type Profile struct {
-	ID           string            `json:"id"`
-	Name         string            `json:"name"`
-	Email        string            `json:"email"`
-	PinSet       bool              `json:"pin_set"`
-	IsSubscriber bool              `json:"is_subscriber"`
-	Subscription *SubscriptionView `json:"subscription"` // null when not subscribed
+	ID           string               `json:"id"`
+	Name         string               `json:"name"`
+	Email        string               `json:"email"`
+	PinSet       bool                 `json:"pin_set"`
+	IsSubscriber bool                 `json:"is_subscriber"` // deprecated: use plan_status
+	PlanStatus   string               `json:"plan_status"`   // "subscribed" | "free" (CR-001-1)
+	Subscription *ProfileSubscription `json:"subscription"`  // null when not subscribed
+}
+
+// ProfileSubscription is the active period plus what the next renewal will charge (CR-001-2).
+type ProfileSubscription struct {
+	SubscriptionView
+	NextRenewalPrice   int  `json:"next_renewal_price"`
+	PriceChangePending bool `json:"price_change_pending"`
 }
 
 type SubscriptionView struct {

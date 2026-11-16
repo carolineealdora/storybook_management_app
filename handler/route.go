@@ -106,6 +106,6 @@ func InitRoute(sharedHolder *models.SharedHolder) {
 	adminBooks.PUT("/:id", adminBookCtrl.Update)
 	adminBooks.DELETE("/:id", adminBookCtrl.Delete)
 
-	admin.GET("/subscription-plan", subscriptionCtrl.GetPlan, adminOnly)
+	admin.GET("/subscription-plan", subscriptionCtrl.GetAdminPlan, adminOnly)
 	admin.PUT("/subscription-plan", subscriptionCtrl.PutPlan, adminOnly)
 }

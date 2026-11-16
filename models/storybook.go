@@ -30,6 +30,13 @@ const (
 	AccessOwned      = "owned"
 	AccessSubscribed = "subscribed"
 	AccessLocked     = "locked"
+
+	// Account badge (CR-001-1)
+	PlanStatusSubscribed = "subscribed"
+	PlanStatusFree       = "free"
+
+	PlanCodeMonthly = "monthly"
+	PlanNameMonthly = "Monthly Subscription"
 )
 
 type Credential struct {
@@ -106,14 +113,29 @@ func (BookFile) TableName() string { return "book_files" }
 
 type SubscriptionPlan struct {
 	ID        string    `gorm:"column:id;primaryKey"`
+	Code      string    `gorm:"column:code"`
+	Name      string    `gorm:"column:name"`
 	Price     int       `gorm:"column:price"`
 	Benefits  string    `gorm:"column:benefits"`
 	Duration  string    `gorm:"column:duration"`
 	CreatedAt time.Time `gorm:"column:created_at"`
 	UpdatedAt time.Time `gorm:"column:updated_at"`
+	UpdatedBy *string   `gorm:"column:updated_by"` // admin id; nil for the seeded plan
 }
 
 func (SubscriptionPlan) TableName() string { return "subscription_plans" }
+
+// PlanPriceChange is one admin price edit (CR-001-2 audit trail).
+type PlanPriceChange struct {
+	ID        string    `gorm:"column:id;primaryKey"`
+	PlanID    string    `gorm:"column:plan_id"`
+	OldPrice  int       `gorm:"column:old_price"`
+	NewPrice  int       `gorm:"column:new_price"`
+	ChangedBy string    `gorm:"column:changed_by"`
+	ChangedAt time.Time `gorm:"column:changed_at"`
+}
+
+func (PlanPriceChange) TableName() string { return "subscription_plan_price_history" }
 
 type Subscription struct {
 	ID            string     `gorm:"column:id;primaryKey"`

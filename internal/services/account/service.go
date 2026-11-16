@@ -64,18 +64,30 @@ func (s *ServiceImpl) GetProfile(userID string) (*dto.Profile, error) {
 	if err != nil {
 		return nil, s.errors.Wrap(respConst.GENERAL_ERROR, err.Error())
 	}
-	p := &dto.Profile{ID: user.ID, Name: user.Name, Email: cred.Email, PinSet: user.PinHash != nil}
+	p := &dto.Profile{ID: user.ID, Name: user.Name, Email: cred.Email, PinSet: user.PinHash != nil, PlanStatus: models.PlanStatusFree}
 
+	// Badge (CR-001-1): an active period means "subscribed", the same rule as the book access check (ADR-006).
+	// Purchases never affect it (B4).
 	sub, err := s.subscriptions.GetActive(userID)
-	switch {
-	case err == nil:
-		p.IsSubscriber = true
-		p.Subscription = &dto.SubscriptionView{
+	if errors.Is(err, gorm.ErrRecordNotFound) {
+		return p, nil
+	}
+	if err != nil {
+		return nil, s.errors.Wrap(respConst.GENERAL_ERROR, err.Error())
+	}
+	plan, err := s.subscriptions.GetPlan()
+	if err != nil {
+		return nil, s.errors.Wrap(respConst.GENERAL_ERROR, err.Error())
+	}
+	p.IsSubscriber, p.PlanStatus = true, models.PlanStatusSubscribed
+	p.Subscription = &dto.ProfileSubscription{
+		SubscriptionView: dto.SubscriptionView{
 			ID: sub.ID, Status: sub.Status, PricePaid: sub.PricePaid, StartedAt: sub.StartedAt,
 			ExpiresAt: sub.ExpiresAt, CancelledAt: sub.CancelledAt, RenewedFromID: sub.RenewedFromID,
-		}
-	case !errors.Is(err, gorm.ErrRecordNotFound):
-		return nil, s.errors.Wrap(respConst.GENERAL_ERROR, err.Error())
+		},
+		// CR-001-2 P2/P5: the period keeps price_paid; renewal charges the plan price at that moment.
+		NextRenewalPrice:   plan.Price,
+		PriceChangePending: plan.Price != sub.PricePaid,
 	}
 	return p, nil
 }

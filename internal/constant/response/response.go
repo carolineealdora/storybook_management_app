@@ -11,6 +11,7 @@ const (
 	VALIDATION_ERROR        = "VALIDATION_ERROR"
 	INVALID_FILE_FORMAT     = "INVALID_FILE_FORMAT"
 	INVALID_AGE_RANGE       = "INVALID_AGE_RANGE"
+	INVALID_PRICE           = "INVALID_PRICE"
 	UNAUTHORIZED            = "UNAUTHORIZED"
 	TOKEN_EXPIRED           = "TOKEN_EXPIRED"
 	REFRESH_TOKEN_EXPIRED   = "REFRESH_TOKEN_EXPIRED"
@@ -32,6 +33,7 @@ const (
 	BOOK_NOT_PURCHASABLE    = "BOOK_NOT_PURCHASABLE"
 	PIN_NOT_SET             = "PIN_NOT_SET"
 	SUBSCRIPTION_NOT_ACTIVE = "SUBSCRIPTION_NOT_ACTIVE"
+	PRICE_CHANGED           = "PRICE_CHANGED"
 	PAYLOAD_TOO_LARGE       = "PAYLOAD_TOO_LARGE"
 	TOO_MANY_ATTEMPTS       = "TOO_MANY_ATTEMPTS"
 	GENERAL_ERROR           = "GENERAL_ERROR"
@@ -41,6 +43,7 @@ var Responses = map[string]models.ResponsePayload{
 	VALIDATION_ERROR:    {Desc: "Request validation failed.", HttpCode: http.StatusBadRequest},
 	INVALID_FILE_FORMAT: {Desc: "Cover must be .jpg, .jpeg or .png and the book file must be .epub.", HttpCode: http.StatusBadRequest},
 	INVALID_AGE_RANGE:   {Desc: "Age must be a whole number and min must be lower than max.", HttpCode: http.StatusBadRequest},
+	INVALID_PRICE:       {Desc: "Price must be a whole number above 0.", HttpCode: http.StatusBadRequest},
 
 	UNAUTHORIZED:          {Desc: "Please log in again.", HttpCode: http.StatusUnauthorized},
 	TOKEN_EXPIRED:         {Desc: "Access token has expired.", HttpCode: http.StatusUnauthorized},
@@ -68,6 +71,7 @@ var Responses = map[string]models.ResponsePayload{
 	BOOK_NOT_PURCHASABLE:    {Desc: "This book cannot be purchased.", HttpCode: http.StatusConflict},
 	PIN_NOT_SET:             {Desc: "Please set a PIN in Settings first.", HttpCode: http.StatusConflict},
 	SUBSCRIPTION_NOT_ACTIVE: {Desc: "There is no active subscription.", HttpCode: http.StatusConflict},
+	PRICE_CHANGED:           {Desc: "The subscription price has changed. Please review the new price.", HttpCode: http.StatusConflict},
 
 	PAYLOAD_TOO_LARGE: {Desc: "Uploaded file is too large.", HttpCode: http.StatusRequestEntityTooLarge},
 
