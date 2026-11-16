@@ -4,6 +4,7 @@ package testdb
 
 import (
 	"testing"
+	"time"
 
 	"codebase/config"
 	"codebase/migrations"
@@ -73,6 +74,55 @@ func TestSchema_CredentialOwner_MustMatchAccountType(t *testing.T) {
 	require.NoError(t, db.Exec(`INSERT INTO users (id, name) VALUES (?, 'P')`, userID))
 	assert.Error(t, db.Exec(`INSERT INTO credentials (email, password_hash, account_type, user_id) VALUES ('a@x.io', 'h', 'admin', ?)`, userID))
 	assert.NoError(t, db.Exec(`INSERT INTO credentials (email, password_hash, account_type, user_id) VALUES ('p@x.io', 'h', 'parent', ?)`, userID))
+}
+
+// The tests below cover the schema shared with storybook_library_app (ADR-010).
+
+func TestSchema_NewUser_PasswordLockoutDefaultsToZero(t *testing.T) {
+	db := Open(t)
+	require.NoError(t, db.Exec(`INSERT INTO users (id, name) VALUES (?, 'P')`, userID))
+	var row struct {
+		Attempts    int        `gorm:"column:password_failed_attempts"`
+		LockedUntil *time.Time `gorm:"column:password_locked_until"`
+	}
+	require.NoError(t, db.RawSql(`SELECT password_failed_attempts, password_locked_until FROM users WHERE id = ?`, &row, userID))
+	assert.Equal(t, 0, row.Attempts)
+	assert.Nil(t, row.LockedUntil)
+}
+
+func TestSchema_EmailDiffersOnlyByCase_Rejected(t *testing.T) {
+	db := Open(t)
+	const user2ID = "55555555-5555-5555-5555-555555555555"
+	require.NoError(t, db.Exec(`INSERT INTO users (id, name) VALUES (?, 'P'), (?, 'Q')`, userID, user2ID))
+	insert := `INSERT INTO credentials (email, password_hash, account_type, user_id) VALUES (?, 'h', 'parent', ?)`
+	require.NoError(t, db.Exec(insert, "p@x.io", userID))
+	assert.Error(t, db.Exec(insert, "P@x.io", user2ID), "the library app logs in with lower(email)")
+}
+
+// Library-style writes: no ids, no created_at/updated_at.
+func TestSchema_InsertsWithoutTimestamps_UseDefaults(t *testing.T) {
+	db := Open(t)
+	require.NoError(t, db.Exec(`INSERT INTO users (id, name) VALUES (?, 'P')`, userID))
+	require.NoError(t, db.Exec(`INSERT INTO credentials (email, password_hash, account_type, user_id) VALUES ('p@x.io', 'h', 'parent', ?)`, userID))
+	require.NoError(t, db.Exec(`INSERT INTO refresh_tokens (credential_id, token_hash, expires_at)
+		SELECT id, repeat('a', 64), NOW() + INTERVAL '7 days' FROM credentials`))
+	require.NoError(t, db.Exec(`INSERT INTO subscription_plans (id, price, benefits) VALUES (?, 49000, 'all')`, planID))
+	require.NoError(t, db.Exec(`INSERT INTO books (id, title, author, description, age_type, age_min, price, status, epub_file_name, epub_size_bytes, epub_content)
+		VALUES (?, 'T', 'A', 'D', 'plus', 3, 15000, 'published', 'b.epub', 1, '\x00')`, bookID))
+	require.NoError(t, db.Exec(`INSERT INTO book_files (book_id, mime_type, file_name, size_bytes, content) VALUES (?, 'image/png', 'c.png', 1, '\x00')`, bookID))
+	require.NoError(t, db.Exec(`INSERT INTO book_orders (user_id, book_id, price, status, idempotency_key) VALUES (?, ?, 15000, 'pending', 'k1')`, userID, bookID))
+	require.NoError(t, db.Exec(`INSERT INTO subscriptions (user_id, plan_id, price_paid, status, started_at, expires_at)
+		VALUES (?, ?, 49000, 'active', NOW(), NOW() + INTERVAL '1 month')`, userID, planID))
+	require.NoError(t, db.Exec(`INSERT INTO subscription_orders (user_id, plan_id, order_type, price, status, idempotency_key, subscription_id, paid_at)
+		SELECT user_id, plan_id, 'new', 49000, 'paid', 'k2', id, NOW() FROM subscriptions`))
+
+	var missing []int64
+	require.NoError(t, db.RawSql(`SELECT
+		(SELECT COUNT(*) FROM book_orders WHERE created_at IS NULL OR updated_at IS NULL) +
+		(SELECT COUNT(*) FROM subscriptions WHERE created_at IS NULL OR updated_at IS NULL) +
+		(SELECT COUNT(*) FROM subscription_orders WHERE created_at IS NULL OR updated_at IS NULL) +
+		(SELECT COUNT(*) FROM book_files WHERE created_at IS NULL OR updated_at IS NULL)`, &missing))
+	assert.Equal(t, []int64{0}, missing)
 }
 
 func TestSeed_RunTwice_IsIdempotent(t *testing.T) {
