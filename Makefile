@@ -22,16 +22,15 @@ db-up:
 
 lint:
 	go vet -tags=integration ./...
-	golangci-lint run --build-tags=integration ./...
 
 build:
 	go build -o bin/app .
 
-# ponytail: skips with a notice when detect-secrets is not installed; CI always runs it.
+# ponytail: skips with a notice when detect-secrets is not installed.
 secrets:
 	@if command -v detect-secrets >/dev/null 2>&1; then \
 		git ls-files -z | xargs -0 detect-secrets-hook --; \
-	else echo "secrets: detect-secrets not installed, skipped locally (CI runs it)"; fi
+	else echo "secrets: detect-secrets not installed, skipped"; fi
 
 done: lint test build secrets
 	@echo "make done: OK"

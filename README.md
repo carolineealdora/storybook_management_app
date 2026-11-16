@@ -134,7 +134,7 @@ Before committing anything, run:
 make done
 ```
 
-This runs lint, tests, and build in one command. **Never commit if it fails.**
+This runs `lint` (go vet), `test`, `build` and `secrets` (detect-secrets; skipped with a notice if not installed) in one command. **Never commit if it fails.**
 
 ---
 

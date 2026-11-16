@@ -24,7 +24,7 @@ Each phase is two commits: `test(scope): …` (failing tests, failure output sho
 ## Phase 0: Scaffold fixes (bugs found while reading the scaffold)
 | Problem found | Fix |
 |---|---|
-| `Makefile` is a **directory** that holds `.github/workflows/ci.yml`. No `make` targets exist, so `make done` cannot run. | Move the workflow to `.github/workflows/ci.yml`. Add a real `Makefile` with `run`, `migrate`, `seed`, `test` (`-race -cover`), `test-integration`, `lint`, `build`, and `done`. |
+| `Makefile` is a **directory**, not a file. No `make` targets exist, so `make done` cannot run. | Replace it with a real `Makefile` with `run`, `migrate`, `seed`, `test` (`-race -cover`), `test-integration`, `lint`, `build`, and `done`. |
 | The migrator's run order comes from Go **map iteration**, which is random, so migrations can apply out of order. | Use the ordered `migrations` slice. |
 | `migrations/20250806084945_create_payment_table.sql` is listed but missing, so `migrate up` fails. | Delete it, together with the loan/partner `payment` example (controller, service, repository, mocks, models, and the `BILL_NOT_FOUND`/`PARTNER_NOT_FOUND` constants). |
 | The global middleware requires an `x-partner-id` header on every route. | Remove it (it's from another domain). Keep `x-request-id` optional and generate one when missing. |
@@ -32,7 +32,7 @@ Each phase is two commits: `test(scope): …` (failing tests, failure output sho
 | `BodyDump` writes full request and response bodies to **Mongo**, which would log passwords, PINs, tokens, and EPUB bytes. This breaks the "never log sensitive fields" rule. | Remove it, along with the Mongo client and config. The echo access log stays. |
 | `main.go`: `InitRoute` blocks on `Start`, and `run()` only prints a log line. | `InitRoute` registers routes only. `run()` starts the scheduler and the server, with graceful shutdown. |
 | The response envelope is `{responseCode, responseDesc, responseData}`, but PRD §12.4 specifies `{error:{code,message}}`. | See D1. |
-| `go.mod` says `go 1.20` while CI uses 1.22. | Bump to 1.22. |
+| `go.mod` says `go 1.20`; the project targets Go 1.22. | Bump to 1.22. |
 
 ## Phase 1: Schema (single initial migration file covering every PRD §12.2 table, UUID PKs, `INTEGER` IDR, `VARCHAR`+`CHECK` enums)
 `users`, `admins`, `credentials`, `refresh_tokens`, `books` (`epub_content BYTEA`, `deleted_at`), `book_files` (cover, `UNIQUE(book_id)`), `subscription_plans` (single row), `subscriptions`, `book_orders` (`UNIQUE(idempotency_key)`), `subscription_orders` (`UNIQUE(idempotency_key)`), `purchases` (`UNIQUE(user_id, book_id)`).
