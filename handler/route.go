@@ -4,12 +4,10 @@ import (
 	"bytes"
 	"context"
 
-	"codebase/handler/controllers/account"
 	"codebase/handler/controllers/adminbook"
 	"codebase/handler/controllers/auth"
 	"codebase/handler/controllers/book"
 	"codebase/handler/controllers/healthcheck"
-	"codebase/handler/controllers/order"
 	"codebase/handler/controllers/subscription"
 	"codebase/internal/constant/key"
 	helpers "codebase/internal/helper"
@@ -52,46 +50,20 @@ func InitRoute(sharedHolder *models.SharedHolder) {
 
 	healthcheckCtrl := healthcheck.NewController(sharedHolder)
 	authCtrl := auth.NewController(sharedHolder)
-	accountCtrl := account.NewController(sharedHolder)
 	adminBookCtrl := adminbook.NewController(sharedHolder)
 	bookCtrl := book.NewController(sharedHolder)
-	orderCtrl := order.NewController(sharedHolder)
 	subscriptionCtrl := subscription.NewController(sharedHolder)
 
-	parentOnly := helpers.RequireAccount(sharedHolder, models.AccountParent)
 	adminOnly := helpers.RequireAccount(sharedHolder, models.AccountAdmin)
 
 	v1 := e.Group("/api/v1")
 	v1.GET("/healthcheck", healthcheckCtrl.GetHealthcheck) // PUBLIC
 
-	// --- Digital Storybook Library app (parent) ---
-	v1.POST("/auth/login", authCtrl.Login)     // PUBLIC
-	v1.POST("/auth/refresh", authCtrl.Refresh) // PUBLIC — parent and admin
-	v1.POST("/auth/logout", authCtrl.Logout, parentOnly)
-
-	me := v1.Group("/me", parentOnly)
-	me.GET("", accountCtrl.GetMe)
-	me.PATCH("", accountCtrl.PatchMe)
-	me.PUT("/pin", accountCtrl.PutPin)
-	me.POST("/pin/verify", accountCtrl.VerifyPin)
-	me.POST("/pin/forgot", accountCtrl.ForgotPin)
-	me.GET("/books", bookCtrl.MyBooks)
-
-	v1.GET("/books", bookCtrl.List, parentOnly)
-	v1.GET("/books/:id", bookCtrl.Get, parentOnly)
-	v1.GET("/books/:id/cover", bookCtrl.Cover, helpers.RequireAccount(sharedHolder, models.AccountParent, models.AccountAdmin))
-	v1.GET("/books/:id/content", bookCtrl.Content, parentOnly)
-
-	bookOrders := v1.Group("/book-orders", parentOnly)
-	bookOrders.POST("", orderCtrl.Create)
-	bookOrders.GET("", orderCtrl.List)
-	bookOrders.POST("/:id/pay", orderCtrl.Pay)
-
-	v1.GET("/subscription/plan", subscriptionCtrl.GetPlan, parentOnly)
-	v1.POST("/subscription-orders", subscriptionCtrl.CreateOrder, parentOnly)
-	v1.POST("/subscription-orders/:id/pay", subscriptionCtrl.PayOrder, parentOnly)
-	v1.POST("/subscriptions/current/cancel", subscriptionCtrl.Cancel, parentOnly)
-	v1.GET("/subscriptions", subscriptionCtrl.History, parentOnly)
+	// SECURITY: manual review required
+	// This backend serves only fe_storybook_management_app (ADR-011). Parent endpoints live in
+	// storybook_library_app, which enforces the parent-mode token and Forgot PIN lockout.
+	v1.POST("/auth/refresh", authCtrl.Refresh)            // PUBLIC — admin refresh tokens only
+	v1.GET("/books/:id/cover", bookCtrl.Cover, adminOnly) // path kept for the frontend
 
 	// --- Book Management app (admin) ---
 	admin := v1.Group("/admin")

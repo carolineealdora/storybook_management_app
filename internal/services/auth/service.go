@@ -122,6 +122,12 @@ func (s *ServiceImpl) Refresh(refreshToken string) (*dto.TokenResponse, error) {
 	if err != nil {
 		return nil, s.errors.Wrap(respConst.GENERAL_ERROR, err.Error())
 	}
+	// SECURITY: manual review required
+	// refresh_tokens is shared with storybook_library_app (ADR-010). Its parent tokens must not
+	// mint access tokens here; answer as for an unknown token (ADR-011).
+	if cred.AccountType != models.AccountAdmin {
+		return nil, s.errors.Wrap(respConst.UNAUTHORIZED, "refresh: "+cred.AccountType+" token on the back-office API")
+	}
 	access, err := s.accessToken(cred, now)
 	if err != nil {
 		return nil, s.errors.Wrap(respConst.GENERAL_ERROR, err.Error())
