@@ -36,16 +36,38 @@ func TestGetPlan_NotConfigured_Returns404(t *testing.T) {
 	assert.Equal(t, http.StatusNotFound, rec.Code)
 }
 
-func TestPutPlan_Valid_Returns200(t *testing.T) {
+func TestGetAdminPlan_Returns200WithHistory(t *testing.T) {
 	svc := new(services_mocks.SubscriptionService)
-	svc.On("UpdatePlan", 59000, "All books").Return(&dto.PlanView{Price: 59000}, nil)
+	svc.On("GetAdminPlan").Return(&dto.AdminPlanView{PlanView: dto.PlanView{Price: 59000},
+		PriceHistory: []dto.PlanPriceChangeView{{OldPrice: 49000, NewPrice: 59000, ChangedBy: "admin-1"}}}, nil)
+	c, rec := apitest.Ctx(apitest.Req{Method: http.MethodGet, Claims: apitest.AdminClaims()})
+	require.NoError(t, newCtrl(svc).GetAdminPlan(c))
+	assert.Equal(t, http.StatusOK, rec.Code)
+	assert.Contains(t, rec.Body.String(), `"price_history":[{`)
+}
+
+func TestPutPlan_Valid_PassesAdminAndReturns200(t *testing.T) {
+	svc := new(services_mocks.SubscriptionService)
+	svc.On("UpdatePlan", "admin-1", 59000, "All books").Return(&dto.AdminPlanView{PlanView: dto.PlanView{Price: 59000}}, nil)
 	c, rec := apitest.Ctx(apitest.Req{Method: http.MethodPut, Body: `{"price":59000,"benefits":"All books"}`, Claims: apitest.AdminClaims()})
 	require.NoError(t, newCtrl(svc).PutPlan(c))
 	assert.Equal(t, http.StatusOK, rec.Code)
 }
 
-func TestPutPlan_InvalidPrice_Returns400(t *testing.T) {
-	for _, body := range []string{`{"price":0,"benefits":"x"}`, `{"price":49000.5,"benefits":"x"}`, `{"price":"49000","benefits":"x"}`, `{"price":49000}`} {
+func TestPutPlan_PriceNotPositive_Returns400InvalidPrice(t *testing.T) {
+	svc := new(services_mocks.SubscriptionService)
+	svc.On("UpdatePlan", "admin-1", 0, "x").Return(nil, errWrap.Wrap(respConst.INVALID_PRICE, "")).Once()
+	svc.On("UpdatePlan", "admin-1", -1, "x").Return(nil, errWrap.Wrap(respConst.INVALID_PRICE, "")).Once()
+	for _, body := range []string{`{"price":0,"benefits":"x"}`, `{"price":-1,"benefits":"x"}`} {
+		c, rec := apitest.Ctx(apitest.Req{Method: http.MethodPut, Body: body, Claims: apitest.AdminClaims()})
+		require.NoError(t, newCtrl(svc).PutPlan(c))
+		assert.Equal(t, http.StatusBadRequest, rec.Code, body)
+		assert.Equal(t, respConst.INVALID_PRICE, apitest.ErrCode(t, rec), body)
+	}
+}
+
+func TestPutPlan_MalformedBody_Returns400Validation(t *testing.T) {
+	for _, body := range []string{`{"price":49000.5,"benefits":"x"}`, `{"price":"49000","benefits":"x"}`, `{"price":49000}`} {
 		c, rec := apitest.Ctx(apitest.Req{Method: http.MethodPut, Body: body, Claims: apitest.AdminClaims()})
 		require.NoError(t, newCtrl(new(services_mocks.SubscriptionService)).PutPlan(c))
 		assert.Equal(t, respConst.VALIDATION_ERROR, apitest.ErrCode(t, rec), body)
@@ -56,22 +78,42 @@ const orderID = "55555555-5555-5555-5555-555555555555"
 
 func TestCreateOrder_Valid_Returns201(t *testing.T) {
 	svc := new(services_mocks.SubscriptionService)
-	svc.On("CreateOrder", "user-1", "k1").Return(&dto.SubscriptionOrderView{ID: orderID}, nil)
-	c, rec := apitest.Ctx(apitest.Req{Method: http.MethodPost, Body: `{"idempotency_key":"k1"}`, Claims: apitest.ParentClaims()})
+	svc.On("CreateOrder", "user-1", "k1", 49000).Return(&dto.SubscriptionOrderView{ID: orderID}, nil)
+	c, rec := apitest.Ctx(apitest.Req{Method: http.MethodPost, Body: `{"idempotency_key":"k1","expected_price":49000}`, Claims: apitest.ParentClaims()})
 	require.NoError(t, newCtrl(svc).CreateOrder(c))
 	assert.Equal(t, http.StatusCreated, rec.Code)
 }
 
-func TestCreateOrder_MissingKey_Returns400(t *testing.T) {
-	c, rec := apitest.Ctx(apitest.Req{Method: http.MethodPost, Body: `{}`, Claims: apitest.ParentClaims()})
-	require.NoError(t, newCtrl(new(services_mocks.SubscriptionService)).CreateOrder(c))
-	assert.Equal(t, respConst.VALIDATION_ERROR, apitest.ErrCode(t, rec))
+func TestCreateOrder_MissingKeyOrExpectedPrice_Returns400(t *testing.T) {
+	for _, body := range []string{`{}`, `{"expected_price":49000}`, `{"idempotency_key":"k1"}`, `{"idempotency_key":"k1","expected_price":0}`} {
+		c, rec := apitest.Ctx(apitest.Req{Method: http.MethodPost, Body: body, Claims: apitest.ParentClaims()})
+		require.NoError(t, newCtrl(new(services_mocks.SubscriptionService)).CreateOrder(c))
+		assert.Equal(t, respConst.VALIDATION_ERROR, apitest.ErrCode(t, rec), body)
+	}
+}
+
+func TestCreateOrder_PriceChanged_Returns409(t *testing.T) {
+	svc := new(services_mocks.SubscriptionService)
+	svc.On("CreateOrder", "user-1", "k1", 49000).Return(nil, errWrap.Wrap(respConst.PRICE_CHANGED, ""))
+	c, rec := apitest.Ctx(apitest.Req{Method: http.MethodPost, Body: `{"idempotency_key":"k1","expected_price":49000}`, Claims: apitest.ParentClaims()})
+	require.NoError(t, newCtrl(svc).CreateOrder(c))
+	assert.Equal(t, http.StatusConflict, rec.Code)
+	assert.Equal(t, respConst.PRICE_CHANGED, apitest.ErrCode(t, rec))
+}
+
+func TestPayOrder_PriceChanged_Returns409(t *testing.T) {
+	svc := new(services_mocks.SubscriptionService)
+	svc.On("PayOrder", "user-1", orderID, "success").Return(nil, errWrap.Wrap(respConst.PRICE_CHANGED, ""))
+	c, rec := apitest.Ctx(apitest.Req{Method: http.MethodPost, Body: `{"result":"success"}`, Claims: apitest.ParentClaims(), Params: map[string]string{"id": orderID}})
+	require.NoError(t, newCtrl(svc).PayOrder(c))
+	assert.Equal(t, http.StatusConflict, rec.Code)
+	assert.Equal(t, respConst.PRICE_CHANGED, apitest.ErrCode(t, rec))
 }
 
 func TestCreateOrder_AlreadySubscribed_Returns409(t *testing.T) {
 	svc := new(services_mocks.SubscriptionService)
-	svc.On("CreateOrder", "user-1", "k1").Return(nil, errWrap.Wrap(respConst.SUBSCRIPTION_ACTIVE, ""))
-	c, rec := apitest.Ctx(apitest.Req{Method: http.MethodPost, Body: `{"idempotency_key":"k1"}`, Claims: apitest.ParentClaims()})
+	svc.On("CreateOrder", "user-1", "k1", 49000).Return(nil, errWrap.Wrap(respConst.SUBSCRIPTION_ACTIVE, ""))
+	c, rec := apitest.Ctx(apitest.Req{Method: http.MethodPost, Body: `{"idempotency_key":"k1","expected_price":49000}`, Claims: apitest.ParentClaims()})
 	require.NoError(t, newCtrl(svc).CreateOrder(c))
 	assert.Equal(t, http.StatusConflict, rec.Code)
 }

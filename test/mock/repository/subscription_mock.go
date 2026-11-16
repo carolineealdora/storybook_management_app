@@ -58,3 +58,8 @@ func (m *SubscriptionRepository) ListDue(now time.Time, limit int) ([]models.Sub
 func (m *SubscriptionRepository) Renew(old, next *models.Subscription, order *models.SubscriptionOrder) error {
 	return m.Called(old, next, order).Error(0)
 }
+
+func (m *SubscriptionRepository) ListPriceHistory(planID string) ([]models.PlanPriceChange, error) {
+	a := m.Called(planID)
+	return ret[[]models.PlanPriceChange](a, 0), a.Error(1)
+}

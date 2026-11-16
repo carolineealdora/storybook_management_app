@@ -25,6 +25,10 @@ func (f fixture) active(yes bool) {
 	}
 }
 
+func (f fixture) plan(price int) {
+	f.subs.On("GetPlan").Return(&models.SubscriptionPlan{ID: "plan-1", Price: price}, nil)
+}
+
 func pendingOrder() *models.SubscriptionOrder {
 	return &models.SubscriptionOrder{ID: "so-1", UserID: "user-1", PlanID: "plan-1", OrderType: models.OrderTypeNew, Price: 49000, Status: models.OrderPending, IdempotencyKey: "k1"}
 }
@@ -50,7 +54,7 @@ func TestCreateOrder_NoActive_CreatesPendingNewOrderAtPlanPrice(t *testing.T) {
 		return o.UserID == "user-1" && o.PlanID == "plan-1" && o.Price == 49000 && o.OrderType == models.OrderTypeNew &&
 			o.Status == models.OrderPending && o.IdempotencyKey == "k1"
 	})).Return(nil)
-	got, err := f.svc.CreateOrder("user-1", "k1")
+	got, err := f.svc.CreateOrder("user-1", "k1", 49000)
 	require.NoError(t, err)
 	assert.Equal(t, 49000, got.Price)
 }
@@ -58,7 +62,7 @@ func TestCreateOrder_NoActive_CreatesPendingNewOrderAtPlanPrice(t *testing.T) {
 func TestCreateOrder_AlreadySubscribed_ReturnsSubscriptionActive(t *testing.T) {
 	f := newFixture()
 	f.active(true)
-	_, err := f.svc.CreateOrder("user-1", "k1")
+	_, err := f.svc.CreateOrder("user-1", "k1", 49000)
 	assert.Equal(t, respConst.SUBSCRIPTION_ACTIVE, code(err))
 }
 
@@ -66,7 +70,7 @@ func TestCreateOrder_NoPlan_ReturnsPlanNotFound(t *testing.T) {
 	f := newFixture()
 	f.active(false)
 	f.subs.On("GetPlan").Return(nil, gorm.ErrRecordNotFound)
-	_, err := f.svc.CreateOrder("user-1", "k1")
+	_, err := f.svc.CreateOrder("user-1", "k1", 49000)
 	assert.Equal(t, respConst.PLAN_NOT_FOUND, code(err))
 }
 
@@ -75,7 +79,7 @@ func TestCreateOrder_ReusedKey_ReturnsDuplicateRequest(t *testing.T) {
 	f.active(false)
 	f.subs.On("GetPlan").Return(&models.SubscriptionPlan{ID: "plan-1", Price: 49000}, nil)
 	f.subs.On("CreateOrder", mock.Anything).Return(sql.ErrDuplicate)
-	_, err := f.svc.CreateOrder("user-1", "k1")
+	_, err := f.svc.CreateOrder("user-1", "k1", 49000)
 	assert.Equal(t, respConst.DUPLICATE_REQUEST, code(err))
 }
 
@@ -85,6 +89,7 @@ func TestPayOrder_Success_ActivatesForOneMonthAtOrderPrice(t *testing.T) {
 	f := newFixture()
 	f.subs.On("GetOrder", "so-1", "user-1").Return(pendingOrder(), nil)
 	f.active(false)
+	f.plan(49000)
 	var sub *models.Subscription
 	f.subs.On("Activate", mock.Anything, mock.Anything, now).Run(func(a mock.Arguments) { sub = a.Get(1).(*models.Subscription) }).Return(nil)
 
@@ -104,6 +109,7 @@ func TestPayOrder_Failed_NoSubscriptionCreated(t *testing.T) {
 	f := newFixture()
 	f.subs.On("GetOrder", "so-1", "user-1").Return(pendingOrder(), nil)
 	f.active(false)
+	f.plan(49000)
 	f.subs.On("MarkOrderFailed", "so-1", now).Return(nil)
 	_, err := f.svc.PayOrder("user-1", "so-1", "failed")
 	assert.Equal(t, respConst.PAYMENT_FAILED, code(err))
@@ -136,6 +142,7 @@ func TestPayOrder_ConcurrentActivation_MapsRepoErrors(t *testing.T) {
 		f := newFixture()
 		f.subs.On("GetOrder", "so-1", "user-1").Return(pendingOrder(), nil)
 		f.active(false)
+		f.plan(49000)
 		f.subs.On("Activate", mock.Anything, mock.Anything, now).Return(repoErr)
 		_, err := f.svc.PayOrder("user-1", "so-1", "success")
 		assert.Equal(t, want, code(err), repoErr.Error())
@@ -147,6 +154,47 @@ func TestPayOrder_OtherUsersOrder_ReturnsOrderNotFound(t *testing.T) {
 	f.subs.On("GetOrder", "so-1", "user-1").Return(nil, gorm.ErrRecordNotFound)
 	_, err := f.svc.PayOrder("user-1", "so-1", "success")
 	assert.Equal(t, respConst.ORDER_NOT_FOUND, code(err))
+}
+
+func TestCreateOrder_StaleExpectedPrice_ReturnsPriceChanged(t *testing.T) {
+	f := newFixture()
+	f.active(false)
+	f.plan(59000)
+	_, err := f.svc.CreateOrder("user-1", "k1", 49000)
+	assert.Equal(t, respConst.PRICE_CHANGED, code(err))
+	f.subs.AssertNotCalled(t, "CreateOrder", mock.Anything)
+}
+
+func TestCreateOrder_AfterPriceChange_ChargesNewPrice(t *testing.T) {
+	f := newFixture()
+	f.active(false)
+	f.plan(59000)
+	f.subs.On("CreateOrder", mock.MatchedBy(func(o *models.SubscriptionOrder) bool { return o.Price == 59000 })).Return(nil)
+	got, err := f.svc.CreateOrder("user-1", "k1", 59000)
+	require.NoError(t, err)
+	assert.Equal(t, 59000, got.Price)
+}
+
+func TestPayOrder_PlanPriceChangedSinceCheckout_ReturnsPriceChanged(t *testing.T) {
+	for _, result := range []string{"success", "failed"} {
+		f := newFixture()
+		f.subs.On("GetOrder", "so-1", "user-1").Return(pendingOrder(), nil)
+		f.active(false)
+		f.plan(59000)
+		_, err := f.svc.PayOrder("user-1", "so-1", result)
+		assert.Equal(t, respConst.PRICE_CHANGED, code(err), result)
+		f.subs.AssertNotCalled(t, "Activate", mock.Anything, mock.Anything, mock.Anything)
+		f.subs.AssertNotCalled(t, "MarkOrderFailed", mock.Anything, mock.Anything)
+	}
+}
+
+func TestPayOrder_PlanLookupFails_ReturnsGeneralError(t *testing.T) {
+	f := newFixture()
+	f.subs.On("GetOrder", "so-1", "user-1").Return(pendingOrder(), nil)
+	f.active(false)
+	f.subs.On("GetPlan").Return(nil, errors.New("db down"))
+	_, err := f.svc.PayOrder("user-1", "so-1", "success")
+	assert.Equal(t, respConst.GENERAL_ERROR, code(err))
 }
 
 // --- Cancel (US-11, E14) ---

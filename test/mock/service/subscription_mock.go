@@ -13,13 +13,18 @@ func (m *SubscriptionService) GetPlan() (*dto.PlanView, error) {
 	return ret[*dto.PlanView](a, 0), a.Error(1)
 }
 
-func (m *SubscriptionService) UpdatePlan(price int, benefits string) (*dto.PlanView, error) {
-	a := m.Called(price, benefits)
-	return ret[*dto.PlanView](a, 0), a.Error(1)
+func (m *SubscriptionService) GetAdminPlan() (*dto.AdminPlanView, error) {
+	a := m.Called()
+	return ret[*dto.AdminPlanView](a, 0), a.Error(1)
 }
 
-func (m *SubscriptionService) CreateOrder(userID, idempotencyKey string) (*dto.SubscriptionOrderView, error) {
-	a := m.Called(userID, idempotencyKey)
+func (m *SubscriptionService) UpdatePlan(adminID string, price int, benefits string) (*dto.AdminPlanView, error) {
+	a := m.Called(adminID, price, benefits)
+	return ret[*dto.AdminPlanView](a, 0), a.Error(1)
+}
+
+func (m *SubscriptionService) CreateOrder(userID, idempotencyKey string, expectedPrice int) (*dto.SubscriptionOrderView, error) {
+	a := m.Called(userID, idempotencyKey, expectedPrice)
 	return ret[*dto.SubscriptionOrderView](a, 0), a.Error(1)
 }
 

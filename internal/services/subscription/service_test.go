@@ -49,40 +49,123 @@ func TestGetPlan_NotConfigured_ReturnsPlanNotFound(t *testing.T) {
 	assert.Equal(t, respConst.PLAN_NOT_FOUND, code(err))
 }
 
-func TestUpdatePlan_Existing_UpdatesInPlace(t *testing.T) {
+func plan49k() *models.SubscriptionPlan {
+	return &models.SubscriptionPlan{ID: "plan-1", Code: "monthly", Name: "Monthly Subscription", Price: 49000, Benefits: "old", Duration: "1 month"}
+}
+
+func history() []models.PlanPriceChange {
+	return []models.PlanPriceChange{{ID: "h-1", PlanID: "plan-1", OldPrice: 49000, NewPrice: 59000, ChangedBy: "admin-1", ChangedAt: now}}
+}
+
+// --- Admin plan view with price history (CR-001-2) ---
+
+func TestGetAdminPlan_ReturnsPlanWithPriceHistory(t *testing.T) {
 	f := newFixture()
-	f.subs.On("GetPlan").Return(&models.SubscriptionPlan{ID: "plan-1", Price: 49000, Benefits: "old", Duration: "1 month"}, nil)
+	f.subs.On("GetPlan").Return(plan49k(), nil)
+	f.subs.On("ListPriceHistory", "plan-1").Return(history(), nil)
+	got, err := f.svc.GetAdminPlan()
+	require.NoError(t, err)
+	assert.Equal(t, "monthly", got.Code)
+	assert.Equal(t, 49000, got.Price)
+	require.Len(t, got.PriceHistory, 1)
+	assert.Equal(t, 49000, got.PriceHistory[0].OldPrice)
+	assert.Equal(t, 59000, got.PriceHistory[0].NewPrice)
+	assert.Equal(t, "admin-1", got.PriceHistory[0].ChangedBy)
+}
+
+func TestGetAdminPlan_NoHistory_ReturnsEmptyList(t *testing.T) {
+	f := newFixture()
+	f.subs.On("GetPlan").Return(plan49k(), nil)
+	f.subs.On("ListPriceHistory", "plan-1").Return(nil, nil)
+	got, err := f.svc.GetAdminPlan()
+	require.NoError(t, err)
+	assert.NotNil(t, got.PriceHistory, "renders as [] not null")
+}
+
+func TestGetAdminPlan_Errors(t *testing.T) {
+	f := newFixture()
+	f.subs.On("GetPlan").Return(nil, gorm.ErrRecordNotFound)
+	_, err := f.svc.GetAdminPlan()
+	assert.Equal(t, respConst.PLAN_NOT_FOUND, code(err))
+
+	f = newFixture()
+	f.subs.On("GetPlan").Return(plan49k(), nil)
+	f.subs.On("ListPriceHistory", "plan-1").Return(nil, errors.New("db down"))
+	_, err = f.svc.GetAdminPlan()
+	assert.Equal(t, respConst.GENERAL_ERROR, code(err))
+}
+
+// --- Update plan (US-17, CR-001-2 P1, E-CR2, E-CR6) ---
+
+func TestUpdatePlan_PriceChanged_SavesWithAdminAndReturnsHistory(t *testing.T) {
+	f := newFixture()
+	f.subs.On("GetPlan").Return(plan49k(), nil).Once()
 	f.subs.On("SavePlan", mock.MatchedBy(func(p *models.SubscriptionPlan) bool {
-		return p.ID == "plan-1" && p.Price == 59000 && p.Benefits == "new" && p.UpdatedAt.Equal(now)
+		return p.ID == "plan-1" && p.Price == 59000 && p.Benefits == "new" && p.UpdatedAt.Equal(now) &&
+			p.UpdatedBy != nil && *p.UpdatedBy == "admin-1"
 	})).Return(nil)
-	got, err := f.svc.UpdatePlan(59000, "  new ")
+	f.subs.On("GetPlan").Return(&models.SubscriptionPlan{ID: "plan-1", Price: 59000, Benefits: "new"}, nil).Once()
+	f.subs.On("ListPriceHistory", "plan-1").Return(history(), nil)
+
+	got, err := f.svc.UpdatePlan("admin-1", 59000, "  new ")
 	require.NoError(t, err)
 	assert.Equal(t, 59000, got.Price)
+	assert.Len(t, got.PriceHistory, 1)
 	f.subs.AssertExpectations(t)
 }
 
-func TestUpdatePlan_NoneYet_CreatesOne(t *testing.T) {
+func TestUpdatePlan_SamePriceNewBenefits_SavesBenefits(t *testing.T) {
 	f := newFixture()
-	f.subs.On("GetPlan").Return(nil, gorm.ErrRecordNotFound)
-	f.subs.On("SavePlan", mock.MatchedBy(func(p *models.SubscriptionPlan) bool { return p.ID == "" && p.Duration == "1 month" })).Return(nil)
-	_, err := f.svc.UpdatePlan(49000, "all")
+	f.subs.On("GetPlan").Return(plan49k(), nil)
+	f.subs.On("SavePlan", mock.MatchedBy(func(p *models.SubscriptionPlan) bool { return p.Price == 49000 && p.Benefits == "new" })).Return(nil)
+	f.subs.On("ListPriceHistory", "plan-1").Return(nil, nil)
+	_, err := f.svc.UpdatePlan("admin-1", 49000, "new")
 	require.NoError(t, err)
+	f.subs.AssertCalled(t, "SavePlan", mock.Anything)
 }
 
-func TestUpdatePlan_InvalidInput_ReturnsValidationError(t *testing.T) {
+func TestUpdatePlan_SamePriceSameBenefits_NoOp(t *testing.T) {
 	f := newFixture()
-	_, err := f.svc.UpdatePlan(0, "all")
-	assert.Equal(t, respConst.VALIDATION_ERROR, code(err), "price must be > 0")
-	_, err = f.svc.UpdatePlan(-5, "all")
+	f.subs.On("GetPlan").Return(plan49k(), nil)
+	f.subs.On("ListPriceHistory", "plan-1").Return(nil, nil)
+	got, err := f.svc.UpdatePlan("admin-1", 49000, "old")
+	require.NoError(t, err)
+	assert.Equal(t, 49000, got.Price)
+	f.subs.AssertNotCalled(t, "SavePlan", mock.Anything)
+}
+
+func TestUpdatePlan_NoneYet_CreatesMonthlyPlan(t *testing.T) {
+	f := newFixture()
+	f.subs.On("GetPlan").Return(nil, gorm.ErrRecordNotFound).Once()
+	f.subs.On("SavePlan", mock.MatchedBy(func(p *models.SubscriptionPlan) bool {
+		return p.ID == "" && p.Code == "monthly" && p.Name == "Monthly Subscription" && p.Duration == "1 month" && *p.UpdatedBy == "admin-1"
+	})).Return(nil)
+	f.subs.On("GetPlan").Return(plan49k(), nil).Once()
+	f.subs.On("ListPriceHistory", "plan-1").Return(nil, nil)
+	_, err := f.svc.UpdatePlan("admin-1", 49000, "all")
+	require.NoError(t, err)
+	f.subs.AssertExpectations(t)
+}
+
+func TestUpdatePlan_PriceNotPositive_ReturnsInvalidPrice(t *testing.T) {
+	f := newFixture()
+	for _, price := range []int{0, -5} {
+		_, err := f.svc.UpdatePlan("admin-1", price, "all")
+		assert.Equal(t, respConst.INVALID_PRICE, code(err), price)
+	}
+	f.subs.AssertNotCalled(t, "SavePlan", mock.Anything)
+}
+
+func TestUpdatePlan_BlankBenefits_ReturnsValidationError(t *testing.T) {
+	f := newFixture()
+	_, err := f.svc.UpdatePlan("admin-1", 49000, "   ")
 	assert.Equal(t, respConst.VALIDATION_ERROR, code(err))
-	_, err = f.svc.UpdatePlan(49000, "   ")
-	assert.Equal(t, respConst.VALIDATION_ERROR, code(err), "benefits required")
 }
 
 func TestUpdatePlan_SaveFails_ReturnsGeneralError(t *testing.T) {
 	f := newFixture()
 	f.subs.On("GetPlan").Return(nil, gorm.ErrRecordNotFound)
 	f.subs.On("SavePlan", mock.Anything).Return(errors.New("db down"))
-	_, err := f.svc.UpdatePlan(49000, "all")
+	_, err := f.svc.UpdatePlan("admin-1", 49000, "all")
 	assert.Equal(t, respConst.GENERAL_ERROR, code(err))
 }

@@ -61,6 +61,7 @@ func TestGetProfile_ActiveSubscription_ShowsSubscriberAndRenewalDate(t *testing.
 	f.withPassword(t, "pw")
 	exp := now.AddDate(0, 1, 0)
 	f.subs.On("GetActive", "user-1").Return(&models.Subscription{ID: "sub-1", Status: models.SubActive, PricePaid: 49000, StartedAt: now, ExpiresAt: exp}, nil)
+	f.subs.On("GetPlan").Return(&models.SubscriptionPlan{ID: "plan-1", Price: 49000}, nil)
 
 	p, err := f.svc.GetProfile("user-1")
 	require.NoError(t, err)
@@ -68,8 +69,36 @@ func TestGetProfile_ActiveSubscription_ShowsSubscriberAndRenewalDate(t *testing.
 	assert.Equal(t, "parent@example.com", p.Email)
 	assert.True(t, p.PinSet)
 	assert.True(t, p.IsSubscriber)
+	assert.Equal(t, models.PlanStatusSubscribed, p.PlanStatus)
 	require.NotNil(t, p.Subscription)
 	assert.Equal(t, exp, p.Subscription.ExpiresAt)
+	assert.Equal(t, 49000, p.Subscription.NextRenewalPrice)
+	assert.False(t, p.Subscription.PriceChangePending)
+}
+
+// CR-001-2 P2: the subscriber keeps price_paid until renewal and sees the upcoming price.
+func TestGetProfile_PlanPriceChanged_ShowsPendingPriceChange(t *testing.T) {
+	f := newFixture()
+	f.accounts.On("GetUser", "user-1").Return(userWithPin(t, ""), nil)
+	f.withPassword(t, "pw")
+	f.subs.On("GetActive", "user-1").Return(&models.Subscription{ID: "sub-1", Status: models.SubActive, PricePaid: 49000, StartedAt: now, ExpiresAt: now.AddDate(0, 1, 0)}, nil)
+	f.subs.On("GetPlan").Return(&models.SubscriptionPlan{ID: "plan-1", Price: 59000}, nil)
+
+	p, err := f.svc.GetProfile("user-1")
+	require.NoError(t, err)
+	assert.Equal(t, 49000, p.Subscription.PricePaid)
+	assert.Equal(t, 59000, p.Subscription.NextRenewalPrice)
+	assert.True(t, p.Subscription.PriceChangePending)
+}
+
+func TestGetProfile_PlanLookupFails_ReturnsGeneralError(t *testing.T) {
+	f := newFixture()
+	f.accounts.On("GetUser", "user-1").Return(userWithPin(t, ""), nil)
+	f.withPassword(t, "pw")
+	f.subs.On("GetActive", "user-1").Return(&models.Subscription{ID: "sub-1", Status: models.SubActive, PricePaid: 49000}, nil)
+	f.subs.On("GetPlan").Return(nil, errors.New("db down"))
+	_, err := f.svc.GetProfile("user-1")
+	assert.Equal(t, respConst.GENERAL_ERROR, helpers.ErrCode(err))
 }
 
 func TestGetProfile_NoSubscriptionNoPin_ShowsNonSubscriber(t *testing.T) {
@@ -82,7 +111,9 @@ func TestGetProfile_NoSubscriptionNoPin_ShowsNonSubscriber(t *testing.T) {
 	require.NoError(t, err)
 	assert.False(t, p.PinSet)
 	assert.False(t, p.IsSubscriber)
+	assert.Equal(t, models.PlanStatusFree, p.PlanStatus, "no, expired, or cancelled subscription → free (B2, B3); purchases are not consulted (B4)")
 	assert.Nil(t, p.Subscription)
+	f.subs.AssertNotCalled(t, "GetPlan")
 }
 
 func TestGetProfile_SubscriptionLookupFails_ReturnsGeneralError(t *testing.T) {
