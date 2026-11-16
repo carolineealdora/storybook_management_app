@@ -154,7 +154,7 @@ Auth, book orders/payment (P7), adminbook, book, renewal scheduler, the existing
 **Classification:** INTERNAL
 **Source:** engineer request 2026-11-16: both backends must use one database, this repo owns the schema, and the library app's schema changes are merged in.
 **Branch:** `feat/STORY-3-shared-schema` (no ticket; STORY-3 is a placeholder), cut from `feat/STORY-2-cr001-badge-plan-pricing`. The library repo gets the same branch name.
-**Status:** DONE (Phases 1–4); Phase 5 is a manual local step. S1–S7 approved as recommended on 2026-11-16. Risk 3 is still open and tracked as TD-12.
+**Status:** DONE (Phases 1–4); Phase 5 is a manual local step. S1–S7 approved as recommended on 2026-11-16. Risk 3 answered on 2026-11-16 (see below); the follow-up is TD-12.
 
 ## What is different today (verified by reading both repos)
 | Area | management_app (owner) | storybook_library_app | Action |
@@ -224,7 +224,7 @@ Each phase is two commits: `test(…)` (failing output shown), then `feat(…)`/
 ## Risks / open questions
 1. **Case-duplicate emails** make the `lower(email)` index fail, and the whole migration with it. Phase 5 step 1 checks for this first.
 2. **Library writes leave `updated_at` stale** on `subscriptions`, `book_orders` and `subscription_orders`. Nothing reads them today, so this goes in tech debt and is not fixed.
-3. **Open question: which backend does each frontend call?** Both backends implement the parent and admin endpoints. If the parent frontend can reach management's `/me/pin/forgot`, the library's password lockout is bypassable. Please confirm the routing; if it can reach it, the lockout should be ported to management in a follow-up.
+3. **Answered 2026-11-16: which backend does each frontend call?** `fe_storybook_management_app` → this backend; `fe_storybook_library_app` → storybook_library_app. Both frontends' API calls confirm this. The parent frontend never calls this backend's `/me/pin/forgot`. However, this backend's parent endpoints (and the library backend's admin endpoints) are still reachable over the network with a token from the same backend, so the lockout can still be bypassed by calling them directly. Follow-up: remove the unused role surface from each backend (TD-12).
 4. **Seed credentials stay in git history.** Deleting the library seed migration removes them from HEAD but not from history, and the branch is already pushed to origin. Change those demo passwords anywhere they are used beyond localhost. A history rewrite is not planned.
 5. **Coupling through a sibling path.** The library's integration test needs management checked out next to it. Acceptable for two local repos; `SCHEMA_DIR` overrides the path.
 

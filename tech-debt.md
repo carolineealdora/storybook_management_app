@@ -35,16 +35,16 @@ Last updated: 2026-11-16
   - Impact: A stolen refresh token works for up to 7 days unless the user logs out.
   - Source: feat/STORY-1 Phase 2 (ADR-003)
   - Created: 2026-11-16
-- [ ] **TD-12: Two backends implement the same rules against one database**
-  - Impact: storybook_library_app and this app both serve parent and admin endpoints with different contracts. For example, the library app has a parent-mode token, pagination and a Forgot PIN lockout; this app has none of these. Rules will drift. If a frontend can reach this app's `/me/pin/forgot`, the library app's password lockout is bypassable.
+- [ ] **TD-12: Each backend still exposes the other app's endpoints**
+  - Impact: Routing is settled: `fe_storybook_management_app` calls only this backend, and `fe_storybook_library_app` calls only storybook_library_app. But this backend still serves parent login and every parent endpoint, without the library app's parent-mode token or Forgot PIN lockout. A parent can log in here and call `/me/pin/forgot` or the pay endpoints directly, bypassing those controls. The library backend likewise still serves admin endpoints.
   - Source: feat/STORY-3-shared-schema (ADR-010)
   - Created: 2026-11-16
-  - Notes: Decide which backend serves which frontend and remove the duplicate endpoints, or port the lockout here.
+  - Notes: Remove the parent routes here (keep `GET /books/:id/cover` for admins) and the admin routes in storybook_library_app. Auth change, so it needs `SECURITY: manual review required`.
 - [ ] **TD-13: Both backends run the hourly renewal job on the shared database**
   - Impact: Duplicate scans; one of the two renewals per period always loses. That is safe thanks to the conditional update and the `renewal:<id>` key, but the loser may log an error (unverified).
   - Source: feat/STORY-3-shared-schema (ADR-010)
   - Created: 2026-11-16
-  - Notes: Run the job in one app only once TD-12 is settled.
+  - Notes: Run it only in storybook_library_app, which owns the parent subscription flows.
 
 ## Priority: Low (nice to have)
 - [ ] **TD-7: No pagination on list endpoints**

@@ -3,7 +3,7 @@
 **This is the map, not the manual.** Product rules: [PRD_storybook-lib-app.md](PRD_storybook-lib-app.md). Endpoints: [API-contracts.md](API-contracts.md). Schema: [DATA-MODELS.md](DATA-MODELS.md). Decisions: [DECISIONS.md](DECISIONS.md).
 
 ## System purpose
-One Go API serves two Lovable frontends:
+This Go API is called by the **Book Management** frontend (`fe_storybook_management_app`). It also still implements the parent endpoints below, but the parent frontend (`fe_storybook_library_app`) calls storybook_library_app instead (TD-12):
 - **Digital Storybook Library app**: parents and children (1–6 y) browse, buy, subscribe, and read EPUB picture books. Parent and Child views share one account; a PIN gates Child → Parent.
 - **Book Management app**: an admin manages the book catalogue and the monthly subscription plan.
 
