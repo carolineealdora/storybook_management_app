@@ -1,6 +1,8 @@
 package repository_mock
 
 import (
+	"time"
+
 	"codebase/models"
 
 	"github.com/stretchr/testify/mock"
@@ -20,4 +22,9 @@ func (m *SubscriptionRepository) SavePlan(p *models.SubscriptionPlan) error {
 func (m *SubscriptionRepository) ListPriceHistory(planID string) ([]models.PlanPriceChange, error) {
 	a := m.Called(planID)
 	return ret[[]models.PlanPriceChange](a, 0), a.Error(1)
+}
+
+func (m *SubscriptionRepository) CountActiveSubscribers(now time.Time) (int, error) {
+	a := m.Called(now)
+	return a.Int(0), a.Error(1)
 }
