@@ -3,6 +3,7 @@
 package book
 
 import (
+	"fmt"
 	"testing"
 	"time"
 
@@ -127,4 +128,36 @@ func TestGetCover_ReturnsBytesOrNotFound(t *testing.T) {
 
 	_, err = r.GetCover("99999999-9999-9999-9999-999999999999")
 	assert.ErrorIs(t, err, gorm.ErrRecordNotFound)
+}
+
+// purchaseCounter is checked at runtime so this file compiles before Repo implements it.
+type purchaseCounter interface {
+	PurchaseCounts(bookIDs []string) (map[string]int, error)
+}
+
+func TestPurchaseCounts_CountsOwnersPerBook_OmitsUnbought(t *testing.T) {
+	db := testdb.Open(t)
+	r := &Repo{db: db}
+	sold, c1 := newBook("Sold", models.BookPublished)
+	require.NoError(t, r.Create(sold, c1))
+	unsold, c2 := newBook("Unsold", models.BookPublished)
+	require.NoError(t, r.Create(unsold, c2))
+	for i := 0; i < 2; i++ {
+		var userIDs, orderIDs []string
+		require.NoError(t, db.RawSql(`INSERT INTO users (name) VALUES (?) RETURNING id`, &userIDs, fmt.Sprintf("Parent %d", i)))
+		require.NoError(t, db.RawSql(`INSERT INTO book_orders (user_id, book_id, price, status, idempotency_key, paid_at)
+			VALUES (?, ?, 15000, 'paid', ?, NOW()) RETURNING id`, &orderIDs, userIDs[0], sold.ID, fmt.Sprintf("key-%d", i)))
+		require.NoError(t, db.Exec(`INSERT INTO purchases (user_id, book_id, book_order_id, price_paid) VALUES (?, ?, ?, 15000)`,
+			userIDs[0], sold.ID, orderIDs[0]))
+	}
+
+	counter, ok := any(r).(purchaseCounter)
+	require.True(t, ok, "Repo must implement PurchaseCounts")
+	counts, err := counter.PurchaseCounts([]string{sold.ID, unsold.ID})
+	require.NoError(t, err)
+	assert.Equal(t, map[string]int{sold.ID: 2}, counts, "unbought books are absent (0)")
+
+	none, err := counter.PurchaseCounts(nil)
+	require.NoError(t, err)
+	assert.Empty(t, none)
 }

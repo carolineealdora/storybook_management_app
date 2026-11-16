@@ -32,11 +32,16 @@ func InitRoute(sharedHolder *models.SharedHolder) {
 			return next(c)
 		}
 	})
-	e.Use(middleware.CORSWithConfig(middleware.CORSConfig{
-		AllowOrigins:  sharedHolder.Config.CORSAllowOrigins,
-		AllowHeaders:  []string{echo.HeaderAuthorization, echo.HeaderContentType, echo.HeaderXRequestID},
-		ExposeHeaders: []string{echo.HeaderXRequestID},
-	}))
+	// SECURITY: manual review required
+	// CORS only for explicitly configured origins. Echo treats an empty AllowOrigins as "*",
+	// so with none configured the middleware is not registered at all: same-origin only.
+	if origins := sharedHolder.Config.CORSAllowOrigins; len(origins) > 0 {
+		e.Use(middleware.CORSWithConfig(middleware.CORSConfig{
+			AllowOrigins:  origins,
+			AllowHeaders:  []string{echo.HeaderAuthorization, echo.HeaderContentType, echo.HeaderXRequestID},
+			ExposeHeaders: []string{echo.HeaderXRequestID},
+		}))
+	}
 	e.Use(apmechov4.Middleware())
 	// Access log only: method, path, status, latency. Bodies are never logged (passwords, PINs, tokens, EPUBs).
 	e.Use(middleware.LoggerWithConfig(middleware.LoggerConfig{

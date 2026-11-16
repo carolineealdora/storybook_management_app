@@ -30,8 +30,9 @@ type SystemConfig struct {
 
 	//Subscription auto-renew job
 
-	//CORS — comma separated origins of the Lovable frontends
-	CORSAllowOrigins []string `env:"CORS_ALLOW_ORIGINS" envSeparator:"," envDefault:"*"`
+	//CORS — comma separated origins allowed to call the API from a browser. Empty (the default) means
+	//same-origin only: the back-office frontend is served on the same origin as /api (STORY-5).
+	CORSAllowOrigins []string `env:"CORS_ALLOW_ORIGINS" envSeparator:","`
 
 	//Seed accounts (go run main.go seed) — mocked login per PRD, values only from env
 	SeedParentName     string `env:"SEED_PARENT_NAME" envDefault:"Demo Parent"`

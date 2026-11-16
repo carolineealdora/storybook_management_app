@@ -214,3 +214,33 @@ func TestRoute_ParentEndpoints_Return404(t *testing.T) {
 		assert.Contains(t, rec.Body.String(), `"NOT_FOUND"`, key)
 	}
 }
+
+// --- CORS (STORY-5): same-origin only unless CORS_ALLOW_ORIGINS lists origins ---
+
+func fromOrigin(method, origin string) *http.Request {
+	req := httptest.NewRequest(method, "/api/v1/healthcheck", nil)
+	req.Header.Set(echo.HeaderOrigin, origin)
+	if method == http.MethodOptions {
+		req.Header.Set(echo.HeaderAccessControlRequestMethod, http.MethodGet)
+	}
+	return req
+}
+
+func TestRoute_NoCORSOrigins_CrossOriginNotAllowed(t *testing.T) {
+	h := newTestHolder() // CORSAllowOrigins empty
+	InitRoute(h)
+	for _, m := range []string{http.MethodGet, http.MethodOptions} {
+		rec := serve(h, fromOrigin(m, "https://evil.example"))
+		assert.Empty(t, rec.Header().Get(echo.HeaderAccessControlAllowOrigin), m)
+	}
+}
+
+func TestRoute_CORSOrigins_AllowsOnlyListedOrigins(t *testing.T) {
+	h := newTestHolder()
+	h.Config.CORSAllowOrigins = []string{"https://admin.example"}
+	InitRoute(h)
+	ok := serve(h, fromOrigin(http.MethodOptions, "https://admin.example"))
+	assert.Equal(t, "https://admin.example", ok.Header().Get(echo.HeaderAccessControlAllowOrigin))
+	other := serve(h, fromOrigin(http.MethodOptions, "https://evil.example"))
+	assert.Empty(t, other.Header().Get(echo.HeaderAccessControlAllowOrigin))
+}

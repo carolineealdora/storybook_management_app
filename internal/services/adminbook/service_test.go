@@ -2,6 +2,7 @@ package adminbook
 
 import (
 	"bytes"
+	"encoding/json"
 	"errors"
 	"testing"
 	"time"
@@ -172,6 +173,7 @@ func TestUpdate_WithoutFiles_KeepsExistingFiles(t *testing.T) {
 	svc, repo := newSvc()
 	existing := &models.Book{ID: "book-1", Title: "Old", Status: models.BookDraft, AgeType: "plus", AgeMin: 3, EpubFileName: "old.epub"}
 	repo.On("GetByID", "book-1").Return(existing, nil)
+	repo.On("PurchaseCounts", []string{"book-1"}).Return(map[string]int{}, nil)
 	var saved *models.Book
 	repo.On("Update", mock.Anything, (*models.BookFile)(nil)).Run(func(a mock.Arguments) { saved = a.Get(0).(*models.Book) }).Return(nil)
 
@@ -188,6 +190,7 @@ func TestUpdate_WithoutFiles_KeepsExistingFiles(t *testing.T) {
 func TestUpdate_WithNewFiles_ReplacesThem(t *testing.T) {
 	svc, repo := newSvc()
 	repo.On("GetByID", "book-1").Return(&models.Book{ID: "book-1"}, nil)
+	repo.On("PurchaseCounts", []string{"book-1"}).Return(map[string]int{}, nil)
 	repo.On("Update", mock.MatchedBy(func(b *models.Book) bool { return len(b.EpubContent) > 0 }),
 		mock.MatchedBy(func(f *models.BookFile) bool { return f.MimeType == "image/png" })).Return(nil)
 	_, err := svc.Update("book-1", validInput())
@@ -236,6 +239,7 @@ func TestGet_Deleted_ReturnsBookNotFound(t *testing.T) {
 func TestGet_Draft_ReturnedToAdmin(t *testing.T) {
 	svc, repo := newSvc()
 	repo.On("GetByID", "b").Return(&models.Book{ID: "b", Status: models.BookDraft, AgeType: "plus", AgeMin: 2}, nil)
+	repo.On("PurchaseCounts", []string{"b"}).Return(map[string]int{}, nil)
 	got, err := svc.Get("b")
 	require.NoError(t, err)
 	assert.Equal(t, models.BookDraft, got.Status)
@@ -245,6 +249,7 @@ func TestGet_Draft_ReturnedToAdmin(t *testing.T) {
 func TestList_PassesSearchAndStatus(t *testing.T) {
 	svc, repo := newSvc()
 	repo.On("AdminList", "cat", "draft").Return([]models.Book{{ID: "b1", AgeType: "plus"}, {ID: "b2", AgeType: "plus"}}, nil)
+	repo.On("PurchaseCounts", []string{"b1", "b2"}).Return(map[string]int{}, nil)
 	got, err := svc.List(" cat ", "draft")
 	require.NoError(t, err)
 	assert.Len(t, got, 2)
@@ -300,4 +305,58 @@ func TestCover_DBDown_ReturnsGeneralError(t *testing.T) {
 	repo.On("GetCover", "b1").Return(nil, errors.New("conn refused"))
 	_, err := svc.Cover("b1")
 	assert.Equal(t, respConst.GENERAL_ERROR, code(err))
+}
+
+// --- purchase_count (STORY-5, design E5) ---
+
+func jsonOf(t *testing.T, v any) string {
+	t.Helper()
+	b, err := json.Marshal(v)
+	require.NoError(t, err)
+	return string(b)
+}
+
+func TestList_AttachesPurchaseCounts_ZeroWhenUnbought(t *testing.T) {
+	svc, repo := newSvc()
+	repo.On("AdminList", "", "").Return([]models.Book{{ID: "b1", AgeType: "plus"}, {ID: "b2", AgeType: "plus"}}, nil)
+	repo.On("PurchaseCounts", []string{"b1", "b2"}).Return(map[string]int{"b1": 38}, nil)
+	got, err := svc.List("", "")
+	require.NoError(t, err)
+	require.Len(t, got, 2)
+	assert.Contains(t, jsonOf(t, got[0]), `"purchase_count":38`)
+	assert.Contains(t, jsonOf(t, got[1]), `"purchase_count":0`)
+}
+
+func TestList_PurchaseCountsFail_ReturnsGeneralError(t *testing.T) {
+	svc, repo := newSvc()
+	repo.On("AdminList", "", "").Return([]models.Book{{ID: "b1", AgeType: "plus"}}, nil)
+	repo.On("PurchaseCounts", []string{"b1"}).Return(nil, errors.New("db down"))
+	_, err := svc.List("", "")
+	assert.Equal(t, respConst.GENERAL_ERROR, code(err))
+}
+
+func TestList_NoBooks_SkipsCountQuery(t *testing.T) {
+	svc, repo := newSvc()
+	repo.On("AdminList", "", "").Return(nil, nil)
+	_, err := svc.List("", "")
+	require.NoError(t, err)
+	repo.AssertNotCalled(t, "PurchaseCounts", mock.Anything)
+}
+
+func TestGet_AttachesPurchaseCount(t *testing.T) {
+	svc, repo := newSvc()
+	repo.On("GetByID", "b").Return(&models.Book{ID: "b", AgeType: "plus"}, nil)
+	repo.On("PurchaseCounts", []string{"b"}).Return(map[string]int{"b": 5}, nil)
+	got, err := svc.Get("b")
+	require.NoError(t, err)
+	assert.Contains(t, jsonOf(t, got), `"purchase_count":5`)
+}
+
+func TestCreate_NewBook_ZeroPurchasesWithoutQuery(t *testing.T) {
+	svc, repo := newSvc()
+	repo.On("Create", mock.Anything, mock.Anything).Return(nil)
+	got, err := svc.Create(validInput())
+	require.NoError(t, err)
+	assert.Contains(t, jsonOf(t, got), `"purchase_count":0`)
+	repo.AssertNotCalled(t, "PurchaseCounts", mock.Anything)
 }

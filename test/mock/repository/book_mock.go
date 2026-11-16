@@ -36,3 +36,8 @@ func (m *BookRepository) GetCover(bookID string) (*models.BookFile, error) {
 	a := m.Called(bookID)
 	return ret[*models.BookFile](a, 0), a.Error(1)
 }
+
+func (m *BookRepository) PurchaseCounts(bookIDs []string) (map[string]int, error) {
+	a := m.Called(bookIDs)
+	return ret[map[string]int](a, 0), a.Error(1)
+}

@@ -24,6 +24,7 @@ type (
 		SoftDelete(id string, at time.Time) error
 
 		GetCover(bookID string) (*models.BookFile, error)
+		PurchaseCounts(bookIDs []string) (map[string]int, error)
 	}
 
 	Repo struct {
@@ -121,4 +122,25 @@ func (r *Repo) GetCover(bookID string) (*models.BookFile, error) {
 		return nil, err
 	}
 	return &f, nil
+}
+
+// PurchaseCounts returns how many users own each book, in one grouped query (PRD E5: owners keep
+// deleted books). Books nobody bought are absent from the map, i.e. 0.
+func (r *Repo) PurchaseCounts(bookIDs []string) (map[string]int, error) {
+	counts := make(map[string]int, len(bookIDs))
+	if len(bookIDs) == 0 {
+		return counts, nil
+	}
+	var rows []struct {
+		BookID string
+		Owners int
+	}
+	if err := r.db.RawSql(`SELECT book_id, COUNT(*) AS owners FROM purchases WHERE book_id IN ? GROUP BY book_id`,
+		&rows, bookIDs); err != nil {
+		return nil, err
+	}
+	for _, row := range rows {
+		counts[row.BookID] = row.Owners
+	}
+	return counts, nil
 }

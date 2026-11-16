@@ -3,6 +3,8 @@
 package subscription
 
 import (
+	"encoding/json"
+	"fmt"
 	"testing"
 	"time"
 
@@ -117,4 +119,53 @@ func TestPlan_NoneConfigured_SaveCreates(t *testing.T) {
 	p := &models.SubscriptionPlan{Code: "monthly", Name: "Monthly Subscription", Price: 1000, Benefits: "x", Duration: "1 month", CreatedAt: time.Now(), UpdatedAt: time.Now()}
 	require.NoError(t, r.SavePlan(p))
 	assert.NotEmpty(t, p.ID)
+}
+
+// --- STORY-5: admin name in price history, active subscriber count ---
+
+type subscriberCounter interface {
+	CountActiveSubscribers(now time.Time) (int, error)
+}
+
+func TestListPriceHistory_IncludesAdminName(t *testing.T) {
+	e := setup(t)
+	admin := e.adminID(t)
+	p, err := e.repo.GetPlan()
+	require.NoError(t, err)
+	p.Price, p.UpdatedAt, p.UpdatedBy = 59000, time.Now().UTC().Truncate(time.Second), &admin
+	require.NoError(t, e.repo.SavePlan(p))
+
+	h, err := e.repo.ListPriceHistory(p.ID)
+	require.NoError(t, err)
+	require.Len(t, h, 1)
+	b, err := json.Marshal(h[0])
+	require.NoError(t, err)
+	assert.Contains(t, string(b), `"ChangedByName":"A"`, "seeded admin is named A")
+}
+
+func TestCountActiveSubscribers_OnlyActiveAndUnexpired(t *testing.T) {
+	e := setup(t)
+	now := time.Now().UTC().Truncate(time.Second)
+	rows := []struct {
+		status  string
+		expires time.Time
+	}{
+		{"active", now.Add(24 * time.Hour)},    // counted
+		{"active", now.Add(48 * time.Hour)},    // counted
+		{"active", now.Add(-time.Hour)},        // period over, renewal not run yet: not counted (CR-001-1 B1)
+		{"cancelled", now.Add(24 * time.Hour)}, // not counted
+		{"expired", now.Add(-24 * time.Hour)},  // not counted
+	}
+	for i, r := range rows {
+		var users []string
+		require.NoError(t, e.db.RawSql(`INSERT INTO users (name) VALUES (?) RETURNING id`, &users, fmt.Sprintf("Parent %d", i)))
+		require.NoError(t, e.db.Exec(`INSERT INTO subscriptions (user_id, plan_id, price_paid, status, started_at, expires_at)
+			VALUES (?, ?, 49000, ?, ?, ?)`, users[0], e.planID, r.status, r.expires.Add(-30*24*time.Hour), r.expires))
+	}
+
+	counter, ok := any(e.repo).(subscriberCounter)
+	require.True(t, ok, "Repo must implement CountActiveSubscribers")
+	n, err := counter.CountActiveSubscribers(now)
+	require.NoError(t, err)
+	assert.Equal(t, 2, n)
 }

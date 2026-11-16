@@ -33,6 +33,7 @@ type AdminBook struct {
 	EpubSizeBytes int       `json:"epub_size_bytes"`
 	CreatedAt     time.Time `json:"created_at"`
 	UpdatedAt     time.Time `json:"updated_at"`
+	PurchaseCount int       `json:"purchase_count"` // users who own the book (design E5)
 }
 
 type AdminBookListQuery struct {

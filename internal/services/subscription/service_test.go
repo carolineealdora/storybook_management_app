@@ -1,6 +1,7 @@
 package subscription
 
 import (
+	"encoding/json"
 	"errors"
 	"testing"
 	"time"
@@ -24,6 +25,13 @@ type fixture struct {
 }
 
 func newFixture() fixture {
+	f := newBareFixture()
+	f.subs.On("CountActiveSubscribers", now).Return(0, nil).Maybe()
+	return f
+}
+
+// newBareFixture has no default expectations, for tests that control the subscriber count.
+func newBareFixture() fixture {
 	f := fixture{subs: new(repository_mock.SubscriptionRepository)}
 	f.svc = &ServiceImpl{subs: f.subs, errors: helpers.NewError(nil), now: func() time.Time { return now }}
 	return f
@@ -152,4 +160,45 @@ func TestUpdatePlan_SaveFails_ReturnsGeneralError(t *testing.T) {
 	f.subs.On("SavePlan", mock.Anything).Return(errors.New("db down"))
 	_, err := f.svc.UpdatePlan("admin-1", 49000, "all")
 	assert.Equal(t, respConst.GENERAL_ERROR, code(err))
+}
+
+// --- active_subscriber_count and changed_by_name (STORY-5, design E4) ---
+
+func jsonOf(t *testing.T, v any) string {
+	t.Helper()
+	b, err := json.Marshal(v)
+	require.NoError(t, err)
+	return string(b)
+}
+
+func TestGetAdminPlan_IncludesActiveSubscriberCount(t *testing.T) {
+	f := newBareFixture()
+	f.subs.On("GetPlan").Return(plan49k(), nil)
+	f.subs.On("ListPriceHistory", "plan-1").Return(nil, nil)
+	f.subs.On("CountActiveSubscribers", now).Return(214, nil)
+	got, err := f.svc.GetAdminPlan()
+	require.NoError(t, err)
+	assert.Contains(t, jsonOf(t, got), `"active_subscriber_count":214`)
+}
+
+func TestGetAdminPlan_CountFails_ReturnsGeneralError(t *testing.T) {
+	f := newBareFixture()
+	f.subs.On("GetPlan").Return(plan49k(), nil)
+	f.subs.On("ListPriceHistory", "plan-1").Return(nil, nil)
+	f.subs.On("CountActiveSubscribers", now).Return(0, errors.New("db down"))
+	_, err := f.svc.GetAdminPlan()
+	assert.Equal(t, respConst.GENERAL_ERROR, code(err))
+}
+
+func TestGetAdminPlan_HistoryIncludesAdminName(t *testing.T) {
+	f := newFixture()
+	// Built from JSON so this compiles before PlanPriceChange has the field.
+	var rows []models.PlanPriceChange
+	require.NoError(t, json.Unmarshal([]byte(`[{"ID":"h-1","PlanID":"plan-1","OldPrice":49000,"NewPrice":59000,
+		"ChangedBy":"admin-1","ChangedByName":"Demo Admin","ChangedAt":"2026-11-16T10:00:00Z"}]`), &rows))
+	f.subs.On("GetPlan").Return(plan49k(), nil)
+	f.subs.On("ListPriceHistory", "plan-1").Return(rows, nil)
+	got, err := f.svc.GetAdminPlan()
+	require.NoError(t, err)
+	assert.Contains(t, jsonOf(t, got.PriceHistory[0]), `"changed_by_name":"Demo Admin"`)
 }

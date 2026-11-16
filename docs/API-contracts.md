@@ -42,6 +42,9 @@ The binary endpoint (`/books/:id/cover`) returns raw bytes on success and the JS
 
 Every response carries an `X-Request-Id` header. Send your own to correlate logs.
 
+### CORS
+Same-origin only by default: the back office is served on the same origin as `/api` (Vite proxy in development, nginx in production), so no `Access-Control-*` headers are sent. A deployment that serves a frontend from another origin lists it in `CORS_ALLOW_ORIGINS` (comma separated).
+
 ### Money, ids, times
 - Prices are **whole IDR** integers (`15000` = Rp 15.000). `0` = free.
 - Ids are UUIDs. A malformed id in the path returns `400 VALIDATION_ERROR`.
@@ -107,8 +110,10 @@ Auth: Admin. Query: `search` (title, case-insensitive), `status` (`draft` | `pub
 { "id": "uuid", "title": "…", "author": "…", "description": "…",
   "age_type": "range | plus", "age_min": 1, "age_max": 3, "age_label": "1–3",
   "price": 15000, "status": "draft | published", "cover_url": "/api/v1/books/{id}/cover",
-  "epub_file_name": "book.epub", "epub_size_bytes": 1048576, "created_at": "…", "updated_at": "…" }
+  "epub_file_name": "book.epub", "epub_size_bytes": 1048576, "created_at": "…", "updated_at": "…",
+  "purchase_count": 38 }
 ```
+`purchase_count` is how many users own the book (rows in `purchases`). It is `0` when nobody has bought it, and always `0` for a book just created. The delete confirmation uses it: "38 families who bought it keep access in My Book" (E5).
 
 ### GET /admin/books/:id
 Auth: Admin. `AdminBook` (drafts included). Errors: `BOOK_NOT_FOUND` (missing or deleted)
@@ -140,9 +145,14 @@ Auth: Admin. **AdminPlan**: the plan, who last edited it, and its price history 
 ```json
 { "data": { "id": "uuid", "code": "monthly", "name": "Monthly Subscription", "price": 59000,
             "benefits": "…", "duration": "1 month", "updated_at": "…", "updated_by": "admin uuid | null",
+            "active_subscriber_count": 214,
             "price_history": [ { "id": "uuid", "old_price": 49000, "new_price": 59000,
-                                 "changed_by": "admin uuid", "changed_at": "…" } ] } }
+                                 "changed_by": "admin uuid", "changed_by_name": "Demo Admin | null",
+                                 "changed_at": "…" } ] } }
 ```
+- `active_subscriber_count`: subscriptions with `status = active` and `expires_at` in the future, one per user (the same rule as the Subscribed badge, CR-001-1 B1).
+- `changed_by_name`: the editing admin's name; `null` only if that admin no longer exists.
+
 Errors: `PLAN_NOT_FOUND`
 
 ### PUT /admin/subscription-plan
