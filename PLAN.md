@@ -233,3 +233,107 @@ Each phase is two commits: `test(…)` (failing output shown), then `feat(…)`/
 - **Medium:** both apps run the renewal job (S7).
 - **Low:** library writes don't maintain `updated_at` (Risk 2).
 - **Low:** schema shared by sibling path (Risk 5).
+
+---
+
+# Plan: Split role surface — each backend serves only its own frontend
+**Classification:** CONFIDENTIAL (describes access-control gaps that are still open)
+**Source:** engineer, 2026-11-16: `fe_storybook_management_app` calls this backend and `fe_storybook_library_app` calls storybook_library_app. Follow-up to STORY-3, TD-12 and TD-13.
+**Branch:** `feat/STORY-4-split-role-surface` in both repos (no ticket; STORY-4 is a placeholder), cut from `feat/STORY-3-shared-schema`.
+**Status:** DONE (Phases 1–5). R1–R8 approved as recommended on 2026-11-16. Phase 6 is a manual step. Risk 1 (unknown clients) was not answered; we proceeded on the assumption that there are none.
+**Tag:** `SECURITY: manual review required`. This changes auth routes and token refresh, and removes payment code from this repo.
+
+## Why (verified by reading both repos and both frontends)
+| # | Finding | Risk area |
+|---|---|---|
+| F1 | This backend still serves parent login and every parent endpoint. It has no parent-mode token and no Forgot PIN lockout. A parent can log in here and call `/me/pin/forgot`, `/book-orders/:id/pay` or `/subscription-orders/:id/pay` directly, bypassing the library backend's controls. | Access control |
+| F2 | The library backend still serves admin login, book CRUD and plan pricing. That duplicates admin rules that this repo owns, and the two copies already differ (e.g. its `/admin/subscription-plan/history`). | Access control, consistency |
+| F3 | **New since STORY-3:** both backends hash refresh tokens the same way (SHA-256 hex) in the shared `refresh_tokens` table, and neither `/auth/refresh` checks the account type. A refresh token issued by either backend is redeemable on the other. | Session management |
+| F4 | Both backends run the hourly renewal job on the shared DB (TD-13). | Reliability |
+| F5 | Access tokens are **not** cross-accepted. The claims differ (this repo reads `account_type`, the library reads `role`), so a token from one backend fails the role check on the other, even with the same `JWT_SECRET`. | Session management (OK today, by accident) |
+| F6 | `fe_storybook_management_app` calls only `/admin/*`, `/auth/refresh` and `/books/:id/cover`. `fe_storybook_library_app` calls only parent endpoints. Nothing in either frontend breaks. ASSUMPTION: there are no other clients (scripts, mobile). | — |
+
+## Decisions (please confirm or annotate)
+| # | Decision | Recommendation |
+|---|---|---|
+| R1 | Unregister the routes only, or also delete the dead code | **Delete.** Unregistered handlers, services, mocks and tests would still need maintenance and would mislead readers. Done in two steps: a security commit (routes and refresh), then a `refactor` commit that deletes the dead code. |
+| R2 | Status for a refresh token of the wrong account type | **401 `UNAUTHORIZED`**, treated like an unknown token, so the frontend goes back to login (E19). The internal log records the reason. Alternative: 403 `FORBIDDEN`, which matches login (E17) but tells the caller the token exists. |
+| R3 | Where the admin cover endpoint lives here | Keep the path `GET /books/:id/cover` (the management frontend calls it), admin only. Move the handler into `adminbook` and delete the `book` controller and service. |
+| R4 | Renewal job | Runs only in storybook_library_app. This repo deletes `scheduler.go`, `RenewDue`, `RENEWAL_INTERVAL` and the goroutine in `main.go`. Closes TD-13. |
+| R5 | Library integration test without admin endpoints | Create books, covers and plan-price changes with SQL fixtures (as STORY-3 did for accounts). Unpublish and delete via `UPDATE books`. Upload and validation checks drop out of the library suite; this repo's `adminbook` tests already cover them. |
+| R6 | `JWT_SECRET` | Use a different secret per backend and say so in both `.env.example` files. No code change (F5). |
+| R7 | Seed | This repo's `make seed` keeps creating the parent account, because the shared DB needs one for the library app. |
+| R8 | API docs | This repo's API-contracts keeps only the Book Management section and links to the library repo's contract for parent endpoints. The library repo drops its admin section. |
+
+## Phases
+Each phase is two commits: `test(…)` (failing output shown), then `feat(…)`/`refactor(…)` (`make done` green). Changed auth code carries `// SECURITY: manual review required`.
+
+- [x] **Phase 1, this repo: close F1 and F3 (security)**
+  - **Tests first:**
+    - [handler/route_test.go](handler/route_test.go): `TestRoute_ParentEndpoints_Return404` (table: `/auth/login`, `/auth/logout`, `/me*`, `/books`, `/books/:id`, `/books/:id/content`, `/book-orders*`, `/subscription/plan`, `/subscription-orders*`, `/subscriptions*`) and `TestRoute_CoverWithParentToken_Returns403`.
+    - [internal/services/auth/service_test.go](internal/services/auth/service_test.go): `TestRefresh_ParentRefreshToken_ReturnsUnauthorized`.
+  - **Change:**
+    - [handler/route.go](handler/route.go): remove the parent block; cover becomes `adminOnly`.
+    - `auth.Refresh`: reject credentials that are not `admin` (R2).
+    - Update the sweep in `route_test.go` to the new route list.
+- [x] **Phase 2, this repo: delete dead code (R1, R3, R4)**
+  - `refactor(api)`, no behaviour change; Phase 1 tests stay green.
+  - **Delete:**
+    - controllers `account`, `order`, `book` (Cover moves into `adminbook`);
+    - services `account`, `order`, `book`;
+    - repository `order`;
+    - subscription `lifecycle.go`, `scheduler.go` and the parent controller methods (`GetPlan`, `CreateOrder`, `PayOrder`, `Cancel`, `History`);
+    - repository methods, models, DTOs, mocks and error codes that become unreferenced;
+    - the renewal goroutine and `RENEWAL_INTERVAL`.
+  - **Keep:** auth `Login(…, accountType)` (used by admin login), the account repository's credential and refresh-token methods, `seed.go`.
+  - Coverage must stay ≥ 80% on the remaining packages.
+- [x] **Phase 3, library repo: close F2 and F3 (security)**
+  - **Tests first, in `handler/integration_test.go`:**
+    - Admin routes (`/admin/auth/*`, `/admin/books*`, `/admin/subscription-plan*`) return 404.
+    - An admin refresh token (SQL fixture) gets 401 on `/auth/refresh`.
+    - Book, cover and price-change setup is rewritten as SQL fixtures (R5).
+  - **Change:** remove the admin routes; `auth.Refresh` rejects credentials that are not `parent` (R2).
+- [x] **Phase 4, library repo: delete dead code**
+  - `refactor(api)`.
+  - **Delete:**
+    - book `admin.go` (service) and the `Admin*` controller methods;
+    - subscription `UpdatePlan`/`PriceHistory` (service and controller);
+    - `AdminLogin`;
+    - the repository writes only they used (book create, update and delete; plan update; price-history insert);
+    - admin-only error codes (`INVALID_FILE_FORMAT`, `INVALID_AGE_RANGE`, `INVALID_PRICE`, `PAYLOAD_TOO_LARGE`) if nothing else returns them;
+    - the upload body limit.
+- [x] **Phase 5, both repos (docs)**
+  - API-contracts (R8), ARCHITECTURE, DATA-MODELS (who writes what), ADR-011 "one backend per frontend", `.env.example` `JWT_SECRET` note (R6).
+  - Tech debt: close TD-12 and TD-13 here and library TD-010's note if it still applies.
+  - Library PLAN.md gets a one-line pointer to this plan.
+- [ ] **Phase 6, manual smoke test (no commit)**
+  1. Run both apps on the shared DB.
+  2. Admin logs in on the management frontend, creates a book and changes the plan price.
+  3. The parent sees the book on the library frontend and gets `PRICE_CHANGED` on the old price.
+  4. Exactly one renewal is created per due period.
+
+## Files NOT touched
+- Migrations, the schema and `seed.go`.
+- `adminbook` business rules and plan-pricing rules in this repo.
+- Parent business rules in the library repo (account, order, subscription, renewal job).
+- Both frontends.
+
+## Risks / open questions
+1. **Breaking change for unknown clients** of the removed endpoints. Both frontends are confirmed clean; anything else (scripts, Postman collections, mobile) is an ASSUMPTION. Please confirm there are none.
+2. **Cross-app behaviour is no longer covered by any automated test.** "Admin changes the price → parent gets `PRICE_CHANGED`" becomes SQL-simulated in the library suite. Phase 6 covers it by hand. A shared end-to-end test is out of scope.
+3. **Tokens already issued:**
+   - A parent refresh token issued by this backend before the change keeps working on the library backend, and an admin one issued by the library keeps working here. Both were proven by password for that same account, so this is accepted.
+   - Nothing issued before the change works on the backend whose role it no longer serves.
+4. **Large deletion:** an estimated 3,000+ lines in this repo alone, from `wc -l` on the packages listed in Phase 2. Mitigated by keeping it in separate refactor commits with no behaviour change after the security commits.
+5. **This repo's `GET /books/:id/cover` keeps a non-`/admin` path** for frontend compatibility. Moving it to `/admin/books/:id/cover` would need a frontend change; not planned.
+
+## Deviations from this plan (made during implementation)
+- **Admin access token in the library test.** No admin login route exists there any more, so the library suite gets an admin access token from `auth.Service.Login(..., admin)` directly to prove parent routes reject it. The admin refresh token is inserted with SQL, as this app would issue it.
+- **`AgeLabel` kept in the library.** It lived in the deleted `admin.go` but parent book cards use it, so it moved into the book service. The free-book fixture now covers the `3+` label.
+- **More removed here than listed.** This app also dropped 14 error codes, 5 GORM models and the parent DTOs. The library app dropped `INVALID_FILE_FORMAT`, `INVALID_AGE_RANGE` and `INVALID_PRICE`.
+- **Failing-test commits.** The `test(auth)` commits leave `make done` red, as earlier stories' test commits did. The following `feat` commit makes it green.
+- **Library coverage is below 80%.** Library unit coverage was already below 80% before this story; the library relies on its end-to-end suite. `services/book` fell from 36% to 14% because the admin validation test left with the admin code.
+
+## Tech-debt entries this plan will add or close
+- **Close:** TD-12, TD-13.
+- **Add, Low:** no automated cross-app end-to-end test (Risk 2).

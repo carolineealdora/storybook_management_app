@@ -58,10 +58,17 @@ subscription_plans ──> admins (updated_by)
 | Account type matches owner | `CHECK` on `credentials` |
 | One account per email, ignoring case | `UNIQUE INDEX uq_credentials_email_lower ON credentials (lower(email))` |
 
-State transitions (`pending → paid/failed`, `active → cancelled/expired`) use conditional updates (`UPDATE … WHERE status = 'pending' RETURNING id`). If two requests race, only one wins; the other gets `DUPLICATE_REQUEST`, or is skipped in the renewal job.
+## Who writes what (ADR-011)
+| Tables | Written by |
+|---|---|
+| `books`, `book_files`, `subscription_plans`, `subscription_plan_price_history`, `admins` | this app (back office) |
+| `users` (profile, PIN, lockouts), `book_orders`, `purchases`, `subscription_orders`, `subscriptions` | storybook_library_app (parent app and its renewal job) |
+| `credentials`, `refresh_tokens` | both: each app logs in, refreshes and logs out only its own account type |
+
+State transitions (`pending → paid/failed`, `active → cancelled/expired`), all made by storybook_library_app, use conditional updates (`UPDATE … WHERE status = 'pending' RETURNING id`). If two requests race, only one wins; the other gets `DUPLICATE_REQUEST`, or is skipped in the renewal job.
 
 ## Access rule (derived, not stored)
-For a user and a book (PRD §12.1):
+Applied by storybook_library_app. For a user and a book (PRD §12.1):
 1. Book missing, or unpublished/deleted **and not purchased** → `BOOK_NOT_FOUND`
 2. `price = 0` → `free`
 3. Row in `purchases` → `owned`
@@ -71,5 +78,5 @@ For a user and a book (PRD §12.1):
 "Active" deliberately ignores `expires_at`: renewal always succeeds (mock), so the hourly job turns ended periods into the next period.
 
 ## Query rules
-- `epub_content` is selected **only** by `GetWithContent`, used by `GET /books/:id/content` after the access check passes. Every list and detail query uses an explicit column list without it.
+- `epub_content` is read only by storybook_library_app's content endpoint, after the access check passes. This app writes it on upload and never selects it: every book query here uses an explicit column list without it.
 - Covers live in `book_files` so book lists never touch image bytes.

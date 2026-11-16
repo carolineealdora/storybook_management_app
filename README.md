@@ -100,8 +100,8 @@ HTTP Request
 cp .env.example .env          # then fill in JWT_SECRET and the SEED_* passwords
 make db-up                    # Postgres 16 in Docker on :5433 (+ storybook_test DB)
 make migrate                  # go run main.go migrate up
-make seed                     # mocked parent + admin accounts and the default plan
-make run                      # API on :9999, auto-renew job starts with it
+make seed                     # mocked admin + parent (for storybook_library_app) and the default plan
+make run                      # back-office API on :9999
 ```
 
 API reference: [docs/API-contracts.md](docs/API-contracts.md). Architecture: [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
@@ -147,9 +147,8 @@ Copy `.env.example` to `.env` and fill in real values. Never commit `.env`.
 | `ENV` | `development` | Runtime environment |
 | `PORT` | `9999` | HTTP port |
 | `DB_HOST` / `DB_PORT` / `DB_NAME` / `DB_USERNAME` / `DB_PASSWORD` | `localhost` / `5432` / `storybook` / `postgres` / `postgres` | PostgreSQL connection (`make db-up` uses port `5433`) |
-| `JWT_SECRET` | — (required) | ≥ 32 chars; the server refuses to start without it |
+| `JWT_SECRET` | — (required) | ≥ 32 chars; the server refuses to start without it. Must differ from storybook_library_app's |
 | `ACCESS_TOKEN_TTL` / `REFRESH_TOKEN_TTL` | `30m` / `168h` | Token lifetimes |
-| `RENEWAL_INTERVAL` | `1h` | How often the subscription auto-renew job runs |
 | `CORS_ALLOW_ORIGINS` | `*` | Comma-separated frontend origins |
 | `SEED_PARENT_EMAIL` / `SEED_PARENT_PASSWORD` / `SEED_ADMIN_EMAIL` / `SEED_ADMIN_PASSWORD` | — | Accounts created by `make seed` |
 | `SEED_PLAN_PRICE` / `SEED_PLAN_BENEFITS` | `49000` / `Read all published books.` | Initial subscription plan |

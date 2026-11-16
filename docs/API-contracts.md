@@ -1,7 +1,8 @@
-# API Contracts — Storybook Library
+# API Contracts — Storybook Back Office
 **Base URL:** `/api/v1` (local: `http://localhost:9999/api/v1`)
 **Last updated:** 2026-11-16
-**Source of truth for:** the Digital Storybook Library app (parent/child) and the Book Management app (admin).
+**Source of truth for:** the Book Management app (`fe_storybook_management_app`, admin only).
+**Parent/child endpoints** are served by storybook_library_app; see that repo's `docs/API-contracts.md` ([ADR-011](DECISIONS.md#adr-011)).
 Behaviour follows [PRD_storybook-lib-app.md](PRD_storybook-lib-app.md) and [CR-001](CR-001_Badge_and_Subscription_Pricing.md); user story (US-), edge case (E-, E-CR) ids are referenced inline.
 
 Update this file whenever an endpoint's request, response, or error codes change.
@@ -20,7 +21,7 @@ Send `Authorization: Bearer <access_token>` on every endpoint except those marke
 
 When a request returns `401 TOKEN_EXPIRED`, call `POST /auth/refresh` and retry. `401 REFRESH_TOKEN_EXPIRED` or `401 UNAUTHORIZED` from refresh means the user goes back to the Login page (E20, E21).
 
-**Roles:** "Parent" endpoints reject admin tokens and "Admin" endpoints reject parent tokens with `403 FORBIDDEN` (E17). Child view uses the parent's token; hiding prices, payment, and Settings in Child view is the client's job (PLAN D7).
+**Roles:** every protected endpoint here requires an admin token; a parent token gets `403 FORBIDDEN` (E17).
 
 ### Envelopes
 Success, single resource:
@@ -37,7 +38,7 @@ Error (all errors):
 ```
 `message` is safe to show to the user. For `VALIDATION_ERROR` it names the failing field, e.g. `"pin must be exactly 4 characters long."`
 
-Binary endpoints (`/books/:id/cover`, `/books/:id/content`) return raw bytes on success and the JSON error envelope on failure.
+The binary endpoint (`/books/:id/cover`) returns raw bytes on success and the JSON error envelope on failure.
 
 Every response carries an `X-Request-Id` header. Send your own to correlate logs.
 
@@ -56,195 +57,44 @@ Every response carries an `X-Request-Id` header. Send your own to correlate logs
 | `UNAUTHORIZED` | 401 | No or invalid token, or the refresh token is unknown or revoked (E19) |
 | `TOKEN_EXPIRED` | 401 | Access token expired: refresh and retry (E20) |
 | `REFRESH_TOKEN_EXPIRED` | 401 | Refresh token older than 7 days (E21) |
-| `INVALID_CREDENTIALS` | 401 | Login email or password wrong (US-01) |
-| `INVALID_PIN` | 401 | Wrong PIN (E12) |
-| `INVALID_PASSWORD` | 401 | Wrong account password on Forgot PIN / Change PIN (E13) |
-| `PAYMENT_FAILED` | 402 | Mock payment returned failed (E9) |
+| `INVALID_CREDENTIALS` | 401 | Login email or password wrong |
 | `FORBIDDEN` | 403 | Wrong account type for this app/endpoint (US-15, E17) |
-| `BOOK_LOCKED` | 403 | Content requested without access (E4, E18) |
 | `BOOK_NOT_FOUND` | 404 | Book missing, unpublished, or deleted (E22) |
-| `ORDER_NOT_FOUND` | 404 | Order missing or belongs to another user |
 | `PLAN_NOT_FOUND` | 404 | Subscription plan not configured yet |
 | `NOT_FOUND` | 404 | Unknown route |
-| `BOOK_ALREADY_OWNED` | 409 | Buying a purchased book (E1) |
-| `SUBSCRIPTION_ACTIVE` | 409 | Buying while subscribed (E2), subscribing twice (E3) |
-| `BOOK_UNAVAILABLE` | 409 | Book unpublished/deleted between checkout and pay (E6) |
-| `DUPLICATE_REQUEST` | 409 | Idempotency key reused, or the order was already paid or failed (E8) |
-| `BOOK_NOT_PURCHASABLE` | 409 | Buying a free book (E10) |
-| `PIN_NOT_SET` | 409 | Verifying a PIN before one is set (E11) |
-| `SUBSCRIPTION_NOT_ACTIVE` | 409 | Cancelling with no active subscription (E14) |
-| `PRICE_CHANGED` | 409 | The plan price changed after the paywall or checkout showed it (E-CR1) |
 | `PAYLOAD_TOO_LARGE` | 413 | Cover > 5 MB, EPUB > 50 MB, or request > 60 MB |
-| `TOO_MANY_ATTEMPTS` | 429 | 5 wrong PINs → locked for 1 minute (E12) |
 | `GENERAL_ERROR` | 500 | Unexpected; details are logged, never returned |
 
 ---
 
-## Shared response shapes
-
-**BookCard** (showcase item)
-```json
-{
-  "id": "uuid", "title": "The Hungry Cat", "author": "Ana",
-  "age_type": "range", "age_min": 1, "age_max": 3, "age_label": "1–3",
-  "price": 15000, "is_free": false,
-  "access": "free | owned | subscribed | locked",
-  "cover_url": "/api/v1/books/{id}/cover"
-}
-```
-`access` drives the UI. Show the lock icon only for `locked`, and the "Free" label for `is_free`. In Child view, hide `price`.
-
-**SubscriptionView**
-```json
-{
-  "id": "uuid", "status": "active | cancelled | expired", "price_paid": 49000,
-  "started_at": "…", "expires_at": "… (next renewal date while active)",
-  "cancelled_at": null, "renewed_from_id": null,
-  "order": { "id": "uuid", "plan_id": "uuid", "order_type": "new | renewal", "price": 49000,
-             "status": "paid", "created_at": "…", "paid_at": "…" }
-}
-```
-
-**BookOrderView**
-```json
-{ "id": "uuid", "book_id": "uuid", "book_title": "The Hungry Cat", "price": 15000,
-  "status": "pending | paid | failed", "created_at": "…", "paid_at": null }
-```
-`price` is the price shown at checkout. It never changes after the admin edits the book (E7).
-
----
-
-## Digital Storybook Library app
-
-### POST /auth/login
-Auth: Public. Parent accounts only. An admin account gets `403 FORBIDDEN`.
-```json
-{ "email": "parent@example.com", "password": "…" }
-```
-`200`
-```json
-{ "data": { "access_token": "…", "refresh_token": "…", "token_type": "Bearer", "expires_in": 1800, "account_type": "parent" } }
-```
-Errors: `VALIDATION_ERROR`, `INVALID_CREDENTIALS`, `FORBIDDEN`
+## Auth (shared by the back office)
 
 ### POST /auth/refresh
-Auth: Public. Works for parent and admin refresh tokens.
+Auth: Public. **Admin refresh tokens only.** The `refresh_tokens` table is shared with storybook_library_app, so a parent refresh token gets `401 UNAUTHORIZED`.
 ```json
 { "refresh_token": "…" }
 ```
-`200`: same as login, without `refresh_token`. Errors: `UNAUTHORIZED`, `REFRESH_TOKEN_EXPIRED`
-
-### POST /auth/logout
-Auth: Parent. Body `{ "refresh_token": "…" }`. `204`. Revokes that refresh token; repeating it is a no-op.
-
-### GET /me
-Auth: Parent. Profile, account badge, and whether a PIN is set.
-```json
-{ "data": { "id": "uuid", "name": "Bunda", "email": "parent@example.com", "pin_set": true,
-            "plan_status": "subscribed", "is_subscriber": true,
-            "subscription": { /* SubscriptionView without order */
-                              "next_renewal_price": 59000, "price_change_pending": true } } }
-```
-- `plan_status` drives the badge (CR-001-1): `subscribed` → "Subscribed", `free` → "Free". It is `subscribed` exactly when an `active` period exists (the same rule that unlocks books). Purchases never change it. `is_subscriber` is deprecated.
-- `subscription` is `null` when `plan_status` is `free`.
-- `next_renewal_price` is the current plan price, charged at the next renewal. When `price_change_pending` is true, show: "Your subscription price will change from Rp [price_paid] to Rp [next_renewal_price] on your next renewal ([expires_at])."
-- After `POST /subscription-orders/:id/pay` succeeds, set the badge to "Subscribed" from that response (or refetch `/me`); no reload needed.
-
-### PATCH /me
-Auth: Parent. `{ "name": "Bunda" }` (required, not blank, ≤ 200). `200` → updated profile.
-
-### PUT /me/pin
-Auth: Parent. Sets the PIN. Changing an existing PIN requires `password` (US-14).
-```json
-{ "pin": "1234", "confirm_pin": "1234", "password": "… (only when a PIN already exists)" }
-```
-`204`. Errors: `VALIDATION_ERROR` (not 4 digits, mismatch, missing password), `INVALID_PASSWORD`
-
-### POST /me/pin/verify
-Auth: Parent. Child → Parent switch. `{ "pin": "1234" }`. `204`.
-Errors: `PIN_NOT_SET` (409), `INVALID_PIN` (401), `TOO_MANY_ATTEMPTS` (429, the 5th wrong PIN and every attempt during the 1-minute lock)
-
-### POST /me/pin/forgot
-Auth: Parent. `{ "password": "…" }`. `204` → switch to Parent view; also clears the PIN lock. Errors: `INVALID_PASSWORD`
-
-### GET /books
-Auth: Parent. Showcase: all published books, newest first, as `BookCard[]` with `meta.total`.
-
-### GET /books/:id
-Auth: Parent. `BookCard` + `"description"`. A purchased book stays visible to its owner even after it is unpublished or deleted (E5).
-Errors: `BOOK_NOT_FOUND`
-
-Detail-page buttons (US-06): `owned`/`free` → **Read**. `subscribed` → disabled **Subscribed** + **Read**. `locked` → **Buy Now** + subscription prompt.
+`200`: same as admin login, without `refresh_token`. Errors: `UNAUTHORIZED`, `REFRESH_TOKEN_EXPIRED`
 
 ### GET /books/:id/cover
-Auth: Parent **or** Admin. Raw image (`image/png` or `image/jpeg`), `Cache-Control: private, max-age=3600`.
+Auth: Admin. Raw image (`image/png` or `image/jpeg`), `Cache-Control: private, max-age=3600`. Works for drafts. The path has no `/admin` prefix for frontend compatibility.
 Because it needs the Authorization header, load it with `fetch` → `blob` → object URL (a plain `<img src>` cannot send the header).
-
-### GET /books/:id/content
-Auth: Parent. Raw EPUB (`application/epub+zip`, `Cache-Control: no-store`) when `access` is not `locked`.
-Errors: `BOOK_LOCKED` (403), `BOOK_NOT_FOUND`
-
-### GET /me/books
-Auth: Parent. My Book: purchased books only, newest purchase first, including books the admin later deleted (US-08, E5).
-`BookCard` + `"price_paid"`, `"purchased_at"`; `access` is always `owned`. Empty list → empty state.
-
-### POST /book-orders
-Auth: Parent. Buy Now (one book per order). Generate a fresh `idempotency_key` (e.g. a UUID) per checkout attempt.
-```json
-{ "book_id": "uuid", "idempotency_key": "uuid" }
-```
-`201` → `BookOrderView` with `status: "pending"` and the checkout price.
-Errors: `BOOK_NOT_FOUND`, `BOOK_NOT_PURCHASABLE`, `BOOK_ALREADY_OWNED`, `SUBSCRIPTION_ACTIVE`, `DUPLICATE_REQUEST`
-
-### POST /book-orders/:id/pay
-Auth: Parent. Mocked payment.
-```json
-{ "result": "success | failed" }
-```
-`200` → `BookOrderView` with `status: "paid"`; the book is unlocked immediately.
-Errors: `PAYMENT_FAILED` (402, order is now `failed`; to retry, create a **new** order with a new key), `DUPLICATE_REQUEST` (already paid or failed: double tap), `BOOK_UNAVAILABLE`, `BOOK_ALREADY_OWNED`, `SUBSCRIPTION_ACTIVE`, `ORDER_NOT_FOUND`
-
-### GET /book-orders
-Auth: Parent. Order History: book orders only (paid and failed), newest first, `BookOrderView[]`.
-
-### GET /subscription/plan
-Auth: Parent.
-```json
-{ "data": { "id": "uuid", "code": "monthly", "name": "Monthly Subscription", "price": 49000,
-            "benefits": "Read all published books.", "duration": "1 month", "updated_at": "…" } }
-```
-The paywall and the book-detail subscription prompt always show this `price`; never hardcode it. Errors: `PLAN_NOT_FOUND`
-
-### POST /subscription-orders
-Auth: Parent. `expected_price` is the price the paywall showed (required, > 0).
-```json
-{ "idempotency_key": "uuid", "expected_price": 49000 }
-```
-`201`
-```json
-{ "data": { "id": "uuid", "plan_id": "uuid", "order_type": "new", "price": 49000, "status": "pending", "created_at": "…", "paid_at": null } }
-```
-Errors: `PRICE_CHANGED` (refetch the plan, show the new price, ask to confirm again), `SUBSCRIPTION_ACTIVE`, `PLAN_NOT_FOUND`, `DUPLICATE_REQUEST`
-
-### POST /subscription-orders/:id/pay
-Auth: Parent. `{ "result": "success | failed" }`. `200` → `SubscriptionView` (`active`, `expires_at` = start + 1 month).
-Errors: `PAYMENT_FAILED` (no subscription created; retry with a new order), `PRICE_CHANGED` (the admin changed the price after checkout; the order is abandoned, check out again at the new price), `SUBSCRIPTION_ACTIVE`, `DUPLICATE_REQUEST`, `ORDER_NOT_FOUND`
-
-Auto-renew (mocked): an hourly server job renews every active period that has ended. It creates a new `active` period at the plan price **at the moment of renewal** (CR-001-2 P2, P5, P6), sets the old one to `expired`, and records a paid `renewal` order. The mock payment always succeeds. There is no manual renew endpoint.
-
-### POST /subscriptions/current/cancel
-Auth: Parent. No body. `200` → `SubscriptionView` with `status: "cancelled"`. Access to non-owned books stops immediately, and no refund is given.
-Errors: `SUBSCRIPTION_NOT_ACTIVE`
-
-### GET /subscriptions
-Auth: Parent. Subscription History: every period with the order that paid for it, newest first, `SubscriptionView[]`.
+Errors: `BOOK_NOT_FOUND`
 
 ---
 
 ## Book Management app (admin)
 
 ### POST /admin/auth/login
-Auth: Public. Same body and response as `/auth/login`, with `account_type: "admin"`. A parent account gets `403 FORBIDDEN`.
+Auth: Public. A parent account gets `403 FORBIDDEN`.
+```json
+{ "email": "admin@example.com", "password": "…" }
+```
+`200`
+```json
+{ "data": { "access_token": "…", "refresh_token": "…", "token_type": "Bearer", "expires_in": 1800, "account_type": "admin" } }
+```
+Errors: `VALIDATION_ERROR`, `INVALID_CREDENTIALS`, `FORBIDDEN`
 
 ### POST /admin/auth/logout
 Auth: Admin. `{ "refresh_token": "…" }` → `204`

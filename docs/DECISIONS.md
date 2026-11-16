@@ -48,12 +48,14 @@ ADR format: what was decided, why, and what would change it. Never delete an ADR
 
 <a name="adr-006"></a>
 ## ADR-006 — "Subscribed" = status active; in-process renewal job
+> Since [ADR-011](#adr-011) the renewal job runs only in storybook_library_app; this app has no ticker or `RENEWAL_INTERVAL`.
 **Decision:** Access checks treat `status = 'active'` as subscribed, without comparing `expires_at`. A goroutine ticker (`RENEWAL_INTERVAL`, default 1h) renews ended periods back-to-back at the current plan price. Month math clamps (Jan 31 → Feb 28).
 **Why:** mock renewal always succeeds, so a date check would only lock users out until the next tick. Conditional updates and the `renewal:<id>` idempotency key make concurrent runs safe.
 **Revisit when:** real payments can fail on renewal (→ grace period + `past_due` status), or many instances run (→ one scheduled worker).
 
 <a name="adr-007"></a>
 ## ADR-007 — View mode is client-side; server enforces the PIN only
+> Since [ADR-011](#adr-011) this app serves no parent endpoints; storybook_library_app enforces Parent view with its parent-mode token.
 **Decision:** The server does not know whether the app is in Parent or Child view. It verifies the PIN (with a 5-attempt / 1-minute lockout) and the Forgot-PIN password. Hiding prices, payment, and Settings in Child view is the client's job.
 **Why:** PRD: one account, one token, no child profiles.
 **Consequence:** a child holding the parent's token could call parent endpoints directly. Accepted for the MVP. The fix is a short-lived "parent mode" token issued by PIN verify and required by payment endpoints, or child profiles.
@@ -81,3 +83,9 @@ ADR format: what was decided, why, and what would change it. Never delete an ADR
 **Decision:** Both backends use one PostgreSQL database. Every migration lives in this repo's `migrations/`. The library app deleted its migrations and migrator; its integration test applies this repo's `migrations/*.sql` in filename order (`SCHEMA_DIR`, default `../storybook_management_app/migrations`). The library app's schema additions were merged in `20261117000002_merge_library_schema.sql`: the Forgot-PIN lockout columns, a unique `lower(email)` index, and three foreign-key indexes. Where the two schemas differed otherwise, this repo's definitions were kept (extra `created_at`/`updated_at`, wider text, status defaults), since the library app's writes already fit them. Seed accounts come only from `make seed` (`SEED_*` env vars). Frontend routing: `fe_storybook_management_app` → this backend, `fe_storybook_library_app` → storybook_library_app.
 **Why:** two migration sets with different ids cannot share one `migrations` table. A second `migrate up` fails on `CREATE TABLE users`, and copying files between repos drifts again. Both Go modules are named `codebase`, so a shared Go package is not an option without renaming one.
 **Revisit when:** a third service needs the schema, or CI comes back (then use a shared schema module or submodule instead of the sibling path).
+
+<a name="adr-011"></a>
+## ADR-011 — One backend per frontend
+**Decision:** This backend serves only `fe_storybook_management_app`: admin login and logout, `/auth/refresh` for admin tokens, back-office books, covers, and the subscription plan. storybook_library_app serves only `fe_storybook_library_app`. Each backend deleted the other role's routes and code, and the renewal job runs only in the library app. Both apps hash refresh tokens into the shared `refresh_tokens` table, so `/auth/refresh` in each app returns `401 UNAUTHORIZED` for a credential of the other account type. The two apps should use different `JWT_SECRET` values. Their access-token claims already differ (`account_type` here, `role` there), so neither accepts the other's access token today.
+**Why:** both frontends already called only their own backend. But the duplicate routes stayed reachable, and here they lacked the library app's parent-mode token and Forgot PIN lockout, so a parent could bypass both by calling this backend directly. Two copies of each rule were also starting to drift.
+**Revisit when:** a third client needs both roles (then add a gateway rather than re-adding routes), or the apps merge into one deployment.
