@@ -1,6 +1,6 @@
 # Data Models — Storybook Library
 **Last updated:** 2026-11-16
-**Schema:** [migrations/20261116000001_create_storybook_schema.sql](../migrations/20261116000001_create_storybook_schema.sql) is the source of truth; this page explains it.
+**Schema:** [migrations/20261116000001_create_storybook_schema.sql](../migrations/20261116000001_create_storybook_schema.sql) and [20261117000001_cr001_plan_price_history.sql](../migrations/20261117000001_cr001_plan_price_history.sql) are the source of truth; this page explains them.
 **Go structs:** [models/storybook.go](../models/storybook.go)
 
 ## Conventions
@@ -25,6 +25,8 @@ users ──< subscriptions >── subscription_plans
 users ──< subscription_orders >── subscription_plans
 subscription_orders ──> subscriptions (set when paid)
 subscriptions ──> subscriptions (renewed_from_id)
+subscription_plans ──< subscription_plan_price_history >── admins (changed_by)
+subscription_plans ──> admins (updated_by)
 ```
 
 | Table | Purpose | Notable columns |
@@ -35,7 +37,8 @@ subscriptions ──> subscriptions (renewed_from_id)
 | `refresh_tokens` | Revocable sessions | `token_hash` (SHA-256 hex, unique), `expires_at` (+7 days), `revoked_at` |
 | `books` | Master book | `age_type` `range`/`plus`, `age_min`, `age_max` (range only), `price`, `status` `draft`/`published`, `epub_content BYTEA`, `deleted_at` |
 | `book_files` | Cover image, one per book | `book_id` unique, `mime_type` `image/jpeg`/`image/png`, `content BYTEA` |
-| `subscription_plans` | The single monthly plan | `price` (> 0), `benefits`, `duration` `'1 month'` |
+| `subscription_plans` | The single monthly plan | `code` (unique, `monthly`), `name`, `price` (> 0), `benefits`, `duration` `'1 month'`, `updated_by` (admin, nullable for the seeded row) |
+| `subscription_plan_price_history` | Audit of admin price changes (CR-001-2) | `old_price`, `new_price`, `changed_by` (admin), `changed_at`; written in the same transaction as the price update |
 | `subscriptions` | One row per subscription period | `status` `active`/`cancelled`/`expired`, `price_paid`, `started_at`, `expires_at`, `cancelled_at`, `renewed_from_id` |
 | `book_orders` | Single-book checkout (Order History) | `price` (snapshot at checkout), `status` `pending`/`paid`/`failed`, `idempotency_key`, `paid_at` |
 | `subscription_orders` | New and renewal payments | `order_type` `new`/`renewal`, `price` (snapshot), `status`, `idempotency_key`, `subscription_id` |
@@ -49,6 +52,7 @@ subscriptions ──> subscriptions (renewed_from_id)
 | Double-tap protection (E8) | `UNIQUE (user_id, idempotency_key)` on both order tables; renewals use key `renewal:<previous subscription id>` |
 | Age range valid (E16) | `CHECK` range ⇒ `age_max` set and `age_min < age_max`; plus ⇒ `age_max` NULL |
 | Prices sane | `CHECK (price >= 0)` on books/orders; `CHECK (price > 0)` on the plan |
+| A history row is a real change (E-CR6) | `CHECK (new_price <> old_price)` on `subscription_plan_price_history` |
 | Account type matches owner | `CHECK` on `credentials` |
 
 State transitions (`pending → paid/failed`, `active → cancelled/expired`) use conditional updates (`UPDATE … WHERE status = 'pending' RETURNING id`). If two requests race, only one wins; the other gets `DUPLICATE_REQUEST`, or is skipped in the renewal job.

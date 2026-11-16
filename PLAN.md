@@ -104,3 +104,40 @@ EPUB/cover stored in the DB · no pagination · HS256 shared secret · in-proces
 - `/auth/refresh` serves both apps; the admin app has no separate refresh endpoint.
 - `GET /books/:id/cover` accepts parent **and** admin tokens, so the admin app can show covers.
 - Additional removals: unused resty HTTP client and the `Restful` mock (they failed `go vet`).
+
+---
+
+# Plan: CR-001 — Account badge & subscription price change
+**Source:** [docs/CR-001_Badge_and_Subscription_Pricing.md](docs/CR-001_Badge_and_Subscription_Pricing.md)
+**Branch:** `feat/STORY-2-cr001-badge-plan-pricing` (no ticket; STORY-2 is a placeholder), cut from `feat/STORY-1-backend-service`
+**Status:** DONE. Approved 2026-11-16 (C1, C4, C7 confirmed; other conflicts resolved as recommended)
+
+## Already in place (no change)
+`subscription_plans`, `subscriptions.plan_id/price_paid`; checkout snapshots the current plan price; renewal charges the latest price (P1–P7, T4–T6, T9, B4, B5).
+
+## Decisions
+| # | Decision |
+|---|---|
+| C1 | Keep the mocked hourly auto-renew (PRD US-10). No manual `/payments/subscription/renew`, so no `NO_ACTIVE_SUBSCRIPTION` (T10 dropped). |
+| C2 | Keep existing paths (`/subscription/plan`, `/subscription-orders`, `/:id/pay`). |
+| C3 | Renewal keeps creating a new period row (PRD US-13); no `renewed_at`. |
+| C4 | `plan_status` = `subscribed` when a `status = 'active'` period exists, same rule as the access check (ADR-006). |
+| C5 | Keep calendar-month duration; no `duration_days`. |
+| C6 | `updated_by` / `changed_by` reference `admins.id`. |
+| C7 | `expected_price` required on `POST /subscription-orders` (409 `PRICE_CHANGED` on mismatch). Pay returns 409 `PRICE_CHANGED` when the order price ≠ current plan price; the order stays pending, client creates a new one. |
+| C8 | Price ≤ 0 → 400 `INVALID_PRICE` (checked in the service). |
+| C9 | `/me` adds `plan_status`; `is_subscriber` kept (deprecated). |
+| C10 | Same price → no history row (E-CR6); same price and benefits → no write at all. First-ever plan creation writes no history row. |
+
+## Phases
+- [x] **Phase A (db):** migration `20261117000001_cr001_plan_price_history.sql`; `SavePlan` writes a history row in the same transaction when the price changes; `ListPriceHistory`.
+- [x] **Phase B (subscription):** `INVALID_PRICE`, `PRICE_CHANGED`; `UpdatePlan(adminID, …)`; `GetAdminPlan` with price history; `expected_price` check on create; plan-price check on pay.
+- [x] **Phase C (account):** `/me` → `plan_status`, `subscription.next_renewal_price`, `subscription.price_change_pending`.
+- [x] **Phase D (docs):** API-contracts, DATA-MODELS, DECISIONS (ADR-009).
+
+## Not touched
+Auth, book orders/payment (P7), adminbook, book, renewal scheduler, the existing migration file, seed.
+
+## Risks
+- Price check on pay and `Activate` are not one transaction: an admin change in that millisecond window is charged at the order price. Acceptable for a mock payment.
+- `expected_price` is a breaking change for existing `POST /subscription-orders` clients.

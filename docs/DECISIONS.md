@@ -13,6 +13,7 @@ ADR format: what was decided, why, and what would change it. Never delete an ADR
 | [ADR-006](#adr-006) | "Subscribed" = status active; in-process renewal job | Accepted |
 | [ADR-007](#adr-007) | View mode is client-side; server enforces the PIN only | Accepted |
 | [ADR-008](#adr-008) | No pagination for the MVP | Accepted |
+| [ADR-009](#adr-009) | CR-001 mapped onto the existing subscription model | Accepted |
 
 ---
 
@@ -62,3 +63,15 @@ ADR format: what was decided, why, and what would change it. Never delete an ADR
 **Decision:** List endpoints return every row with `meta.total`.
 **Why:** PRD: "Home shows all published books in one showcase", and the catalogue is small.
 **Revisit when:** any list grows past a few hundred rows (tracked as tech debt).
+
+<a name="adr-009"></a>
+## ADR-009 — CR-001 mapped onto the existing subscription model
+**Decision:** CR-001 is implemented on the existing endpoints and tables instead of its proposed ones:
+- Keep `/subscription/plan`, `/subscription-orders` and `/:id/pay`. No `/payments/subscription*` paths.
+- Keep the mocked hourly auto-renew (PRD US-10). No manual renew endpoint, so no `NO_ACTIVE_SUBSCRIPTION`.
+- Each renewal is still a new period row (PRD US-13), so there is no `renewed_at`. The period keeps a calendar month, so there is no `duration_days`.
+- `plan_status` uses the same `status = 'active'` rule as book access (ADR-006), not `expires_at > now`.
+- `updated_by` / `changed_by` reference `admins`, since admins are not in `users`.
+- `expected_price` is required on order creation. Pay compares the order's snapshot price with the current plan price. Either mismatch returns `409 PRICE_CHANGED`.
+**Why:** most of CR-001-2 (price locked per period, latest price at renewal) already held. Renaming endpoints or changing the renewal model would break the PRD contract for no behaviour gain. A date-based badge would disagree with book access during the gap before the renewal job runs.
+**Revisit when:** renewals become user-triggered or can fail (then `expires_at` must count, and `past_due` appears), or a second plan is sold.

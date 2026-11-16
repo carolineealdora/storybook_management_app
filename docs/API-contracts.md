@@ -2,7 +2,7 @@
 **Base URL:** `/api/v1` (local: `http://localhost:9999/api/v1`)
 **Last updated:** 2026-11-16
 **Source of truth for:** the Digital Storybook Library app (parent/child) and the Book Management app (admin).
-Behaviour follows [PRD_storybook-lib-app.md](PRD_storybook-lib-app.md); user story (US-) and edge case (E-) ids are referenced inline.
+Behaviour follows [PRD_storybook-lib-app.md](PRD_storybook-lib-app.md) and [CR-001](CR-001_Badge_and_Subscription_Pricing.md); user story (US-), edge case (E-, E-CR) ids are referenced inline.
 
 Update this file whenever an endpoint's request, response, or error codes change.
 
@@ -52,6 +52,7 @@ Every response carries an `X-Request-Id` header. Send your own to correlate logs
 | `VALIDATION_ERROR` | 400 | Missing/malformed field, bad JSON, non-UUID id |
 | `INVALID_FILE_FORMAT` | 400 | Cover not .jpg/.jpeg/.png or book file not .epub (E15) |
 | `INVALID_AGE_RANGE` | 400 | Age not a whole number, or min ≥ max (E16) |
+| `INVALID_PRICE` | 400 | Subscription plan price ≤ 0 (E-CR2) |
 | `UNAUTHORIZED` | 401 | No or invalid token, or the refresh token is unknown or revoked (E19) |
 | `TOKEN_EXPIRED` | 401 | Access token expired: refresh and retry (E20) |
 | `REFRESH_TOKEN_EXPIRED` | 401 | Refresh token older than 7 days (E21) |
@@ -72,6 +73,7 @@ Every response carries an `X-Request-Id` header. Send your own to correlate logs
 | `BOOK_NOT_PURCHASABLE` | 409 | Buying a free book (E10) |
 | `PIN_NOT_SET` | 409 | Verifying a PIN before one is set (E11) |
 | `SUBSCRIPTION_NOT_ACTIVE` | 409 | Cancelling with no active subscription (E14) |
+| `PRICE_CHANGED` | 409 | The plan price changed after the paywall or checkout showed it (E-CR1) |
 | `PAYLOAD_TOO_LARGE` | 413 | Cover > 5 MB, EPUB > 50 MB, or request > 60 MB |
 | `TOO_MANY_ATTEMPTS` | 429 | 5 wrong PINs → locked for 1 minute (E12) |
 | `GENERAL_ERROR` | 500 | Unexpected; details are logged, never returned |
@@ -136,11 +138,17 @@ Auth: Public. Works for parent and admin refresh tokens.
 Auth: Parent. Body `{ "refresh_token": "…" }`. `204`. Revokes that refresh token; repeating it is a no-op.
 
 ### GET /me
-Auth: Parent. Profile, subscription badge, and whether a PIN is set.
+Auth: Parent. Profile, account badge, and whether a PIN is set.
 ```json
 { "data": { "id": "uuid", "name": "Bunda", "email": "parent@example.com", "pin_set": true,
-            "is_subscriber": true, "subscription": { /* SubscriptionView without order, or null */ } } }
+            "plan_status": "subscribed", "is_subscriber": true,
+            "subscription": { /* SubscriptionView without order */
+                              "next_renewal_price": 59000, "price_change_pending": true } } }
 ```
+- `plan_status` drives the badge (CR-001-1): `subscribed` → "Subscribed", `free` → "Free". It is `subscribed` exactly when an `active` period exists (the same rule that unlocks books). Purchases never change it. `is_subscriber` is deprecated.
+- `subscription` is `null` when `plan_status` is `free`.
+- `next_renewal_price` is the current plan price, charged at the next renewal. When `price_change_pending` is true, show: "Your subscription price will change from Rp [price_paid] to Rp [next_renewal_price] on your next renewal ([expires_at])."
+- After `POST /subscription-orders/:id/pay` succeeds, set the badge to "Subscribed" from that response (or refetch `/me`); no reload needed.
 
 ### PATCH /me
 Auth: Parent. `{ "name": "Bunda" }` (required, not blank, ≤ 200). `200` → updated profile.
@@ -202,22 +210,27 @@ Auth: Parent. Order History: book orders only (paid and failed), newest first, `
 ### GET /subscription/plan
 Auth: Parent.
 ```json
-{ "data": { "id": "uuid", "price": 49000, "benefits": "Read all published books.", "duration": "1 month", "updated_at": "…" } }
+{ "data": { "id": "uuid", "code": "monthly", "name": "Monthly Subscription", "price": 49000,
+            "benefits": "Read all published books.", "duration": "1 month", "updated_at": "…" } }
 ```
-Errors: `PLAN_NOT_FOUND`
+The paywall and the book-detail subscription prompt always show this `price`; never hardcode it. Errors: `PLAN_NOT_FOUND`
 
 ### POST /subscription-orders
-Auth: Parent. `{ "idempotency_key": "uuid" }`. `201`
+Auth: Parent. `expected_price` is the price the paywall showed (required, > 0).
+```json
+{ "idempotency_key": "uuid", "expected_price": 49000 }
+```
+`201`
 ```json
 { "data": { "id": "uuid", "plan_id": "uuid", "order_type": "new", "price": 49000, "status": "pending", "created_at": "…", "paid_at": null } }
 ```
-Errors: `SUBSCRIPTION_ACTIVE`, `PLAN_NOT_FOUND`, `DUPLICATE_REQUEST`
+Errors: `PRICE_CHANGED` (refetch the plan, show the new price, ask to confirm again), `SUBSCRIPTION_ACTIVE`, `PLAN_NOT_FOUND`, `DUPLICATE_REQUEST`
 
 ### POST /subscription-orders/:id/pay
 Auth: Parent. `{ "result": "success | failed" }`. `200` → `SubscriptionView` (`active`, `expires_at` = start + 1 month).
-Errors: `PAYMENT_FAILED` (no subscription created; retry with a new order), `SUBSCRIPTION_ACTIVE`, `DUPLICATE_REQUEST`, `ORDER_NOT_FOUND`
+Errors: `PAYMENT_FAILED` (no subscription created; retry with a new order), `PRICE_CHANGED` (the admin changed the price after checkout; the order is abandoned, check out again at the new price), `SUBSCRIPTION_ACTIVE`, `DUPLICATE_REQUEST`, `ORDER_NOT_FOUND`
 
-Auto-renew: an hourly server job renews every active period that has ended. It creates a new `active` period at the current plan price, sets the old one to `expired`, and records a paid `renewal` order. The mock payment always succeeds.
+Auto-renew (mocked): an hourly server job renews every active period that has ended. It creates a new `active` period at the plan price **at the moment of renewal** (CR-001-2 P2, P5, P6), sets the old one to `expired`, and records a paid `renewal` order. The mock payment always succeeds. There is no manual renew endpoint.
 
 ### POST /subscriptions/current/cancel
 Auth: Parent. No body. `200` → `SubscriptionView` with `status: "cancelled"`. Access to non-owned books stops immediately, and no refund is given.
@@ -273,14 +286,26 @@ Auth: Admin. Same form; all text fields required. `cover` and `epub` are **optio
 Auth: Admin. Soft delete → `204`. The book disappears from the showcase and admin list; owners keep it in My Book (E5). Errors: `BOOK_NOT_FOUND`
 
 ### GET /admin/subscription-plan
-Auth: Admin. Same shape as `GET /subscription/plan`.
+Auth: Admin. **AdminPlan**: the plan, who last edited it, and its price history (newest first).
+```json
+{ "data": { "id": "uuid", "code": "monthly", "name": "Monthly Subscription", "price": 59000,
+            "benefits": "…", "duration": "1 month", "updated_at": "…", "updated_by": "admin uuid | null",
+            "price_history": [ { "id": "uuid", "old_price": 49000, "new_price": 59000,
+                                 "changed_by": "admin uuid", "changed_at": "…" } ] } }
+```
+Errors: `PLAN_NOT_FOUND`
 
 ### PUT /admin/subscription-plan
 Auth: Admin.
 ```json
 { "price": 59000, "benefits": "Read all published books." }
 ```
-`price` whole number > 0, `benefits` required. `200` → plan. Applies to new subscriptions and renewals; active periods keep their `price_paid` (US-17).
+`200` → AdminPlan.
+- `price` must be a whole number > 0, otherwise `400 INVALID_PRICE` (E-CR2). A non-number is `400 VALIDATION_ERROR`. `benefits` is required.
+- New subscribers pay the new price immediately. Active subscribers keep their `price_paid` until their next renewal, which charges the new price (US-17, CR-001-2).
+- A price change writes a `price_history` row. The same price writes no row (E-CR6); the same price and benefits writes nothing.
+- Before saving, the back-office confirms: "New subscribers will pay Rp [new] immediately. Existing subscribers will pay Rp [new] from their next renewal."
+- Errors: `INVALID_PRICE`, `VALIDATION_ERROR`, `FORBIDDEN` (parent token, E-CR3)
 
 ---
 

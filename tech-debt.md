@@ -54,6 +54,11 @@ Last updated: 2026-11-16
   - Impact: `migrate down` does not undo the schema (inherited scaffold behaviour).
   - Source: scaffold / feat/STORY-1 Phase 0
   - Created: 2026-11-16
+- [ ] **TD-11: Subscription pay checks the plan price outside the activation transaction**
+  - Impact: If the admin changes the price in the milliseconds between the `PRICE_CHANGED` check and `Activate`, the subscriber is charged the checkout price instead of getting 409. Harmless with mock payment; matters with a real gateway.
+  - Source: feat/STORY-2 CR-001 (`PayOrder`)
+  - Created: 2026-11-16
+  - Notes: Re-check `subscription_plans.price` inside the `Activate` transaction (`SELECT … FOR SHARE`).
 
 ## Resolved
 <!-- Empty -->
