@@ -6,7 +6,6 @@ import (
 
 	"codebase/handler/controllers/adminbook"
 	"codebase/handler/controllers/auth"
-	"codebase/handler/controllers/book"
 	"codebase/handler/controllers/healthcheck"
 	"codebase/handler/controllers/subscription"
 	"codebase/internal/constant/key"
@@ -51,7 +50,6 @@ func InitRoute(sharedHolder *models.SharedHolder) {
 	healthcheckCtrl := healthcheck.NewController(sharedHolder)
 	authCtrl := auth.NewController(sharedHolder)
 	adminBookCtrl := adminbook.NewController(sharedHolder)
-	bookCtrl := book.NewController(sharedHolder)
 	subscriptionCtrl := subscription.NewController(sharedHolder)
 
 	adminOnly := helpers.RequireAccount(sharedHolder, models.AccountAdmin)
@@ -62,8 +60,8 @@ func InitRoute(sharedHolder *models.SharedHolder) {
 	// SECURITY: manual review required
 	// This backend serves only fe_storybook_management_app (ADR-011). Parent endpoints live in
 	// storybook_library_app, which enforces the parent-mode token and Forgot PIN lockout.
-	v1.POST("/auth/refresh", authCtrl.Refresh)            // PUBLIC — admin refresh tokens only
-	v1.GET("/books/:id/cover", bookCtrl.Cover, adminOnly) // path kept for the frontend
+	v1.POST("/auth/refresh", authCtrl.Refresh)                 // PUBLIC — admin refresh tokens only
+	v1.GET("/books/:id/cover", adminBookCtrl.Cover, adminOnly) // path kept for the frontend
 
 	// --- Book Management app (admin) ---
 	admin := v1.Group("/admin")

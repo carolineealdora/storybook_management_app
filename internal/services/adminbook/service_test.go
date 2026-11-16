@@ -277,3 +277,27 @@ func TestDelete_Missing_ReturnsBookNotFound(t *testing.T) {
 	repo.On("SoftDelete", "b", now).Return(gorm.ErrRecordNotFound)
 	assert.Equal(t, respConst.BOOK_NOT_FOUND, code(svc.Delete("b")))
 }
+
+// --- Cover ---
+
+func TestCover_Found_ReturnsFile(t *testing.T) {
+	svc, repo := newSvc()
+	repo.On("GetCover", "b1").Return(&models.BookFile{MimeType: "image/png", Content: []byte("PNG")}, nil)
+	got, err := svc.Cover("b1")
+	require.NoError(t, err)
+	assert.Equal(t, "image/png", got.MimeType)
+}
+
+func TestCover_Missing_ReturnsBookNotFound(t *testing.T) {
+	svc, repo := newSvc()
+	repo.On("GetCover", "b1").Return(nil, gorm.ErrRecordNotFound)
+	_, err := svc.Cover("b1")
+	assert.Equal(t, respConst.BOOK_NOT_FOUND, code(err))
+}
+
+func TestCover_DBDown_ReturnsGeneralError(t *testing.T) {
+	svc, repo := newSvc()
+	repo.On("GetCover", "b1").Return(nil, errors.New("conn refused"))
+	_, err := svc.Cover("b1")
+	assert.Equal(t, respConst.GENERAL_ERROR, code(err))
+}

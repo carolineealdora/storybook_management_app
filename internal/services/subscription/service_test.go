@@ -33,22 +33,6 @@ func code(err error) string { return helpers.ErrCode(err) }
 
 // --- Plan (US-17) ---
 
-func TestGetPlan_Configured_ReturnsPriceAndBenefits(t *testing.T) {
-	f := newFixture()
-	f.subs.On("GetPlan").Return(&models.SubscriptionPlan{ID: "plan-1", Price: 49000, Benefits: "All books", Duration: "1 month"}, nil)
-	got, err := f.svc.GetPlan()
-	require.NoError(t, err)
-	assert.Equal(t, 49000, got.Price)
-	assert.Equal(t, "All books", got.Benefits)
-}
-
-func TestGetPlan_NotConfigured_ReturnsPlanNotFound(t *testing.T) {
-	f := newFixture()
-	f.subs.On("GetPlan").Return(nil, gorm.ErrRecordNotFound)
-	_, err := f.svc.GetPlan()
-	assert.Equal(t, respConst.PLAN_NOT_FOUND, code(err))
-}
-
 func plan49k() *models.SubscriptionPlan {
 	return &models.SubscriptionPlan{ID: "plan-1", Code: "monthly", Name: "Monthly Subscription", Price: 49000, Benefits: "old", Duration: "1 month"}
 }

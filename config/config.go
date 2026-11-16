@@ -29,7 +29,6 @@ type SystemConfig struct {
 	RefreshTokenTTL time.Duration `env:"REFRESH_TOKEN_TTL" envDefault:"168h"`
 
 	//Subscription auto-renew job
-	RenewalInterval time.Duration `env:"RENEWAL_INTERVAL" envDefault:"1h"`
 
 	//CORS — comma separated origins of the Lovable frontends
 	CORSAllowOrigins []string `env:"CORS_ALLOW_ORIGINS" envSeparator:"," envDefault:"*"`

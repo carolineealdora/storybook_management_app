@@ -21,7 +21,6 @@ func NewController(holder *models.SharedHolder) *Controller {
 	return &Controller{Response: helpers.NewResponse(holder), Binding: helpers.NewBinding(), AuthService: auth.NewService(holder)}
 }
 
-func (c *Controller) Login(ec echo.Context) error      { return c.login(ec, models.AccountParent) }
 func (c *Controller) AdminLogin(ec echo.Context) error { return c.login(ec, models.AccountAdmin) }
 
 func (c *Controller) login(ec echo.Context, accountType string) error {

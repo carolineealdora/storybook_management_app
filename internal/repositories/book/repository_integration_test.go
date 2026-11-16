@@ -116,33 +116,10 @@ func TestUpdate_DeletedBook_ReturnsNotFound(t *testing.T) {
 	assert.ErrorIs(t, r.Update(b, nil), gorm.ErrRecordNotFound)
 }
 
-func TestListPublished_OnlyPublishedNotDeleted_NewestFirst_NoEpub(t *testing.T) {
+func TestGetCover_ReturnsBytesOrNotFound(t *testing.T) {
 	r := &Repo{db: testdb.Open(t)}
-	var ids []string
-	for i, x := range []struct{ title, status string }{{"old", "published"}, {"draft", "draft"}, {"gone", "published"}, {"new", "published"}} {
-		b, c := newBook(x.title, x.status)
-		b.CreatedAt = b.CreatedAt.Add(time.Duration(i) * time.Minute)
-		require.NoError(t, r.Create(b, c))
-		ids = append(ids, b.ID)
-	}
-	require.NoError(t, r.SoftDelete(ids[2], time.Now()))
-
-	got, err := r.ListPublished()
-	require.NoError(t, err)
-	require.Len(t, got, 2)
-	assert.Equal(t, "new", got[0].Title)
-	assert.Equal(t, "old", got[1].Title)
-	assert.Nil(t, got[0].EpubContent)
-}
-
-func TestGetWithContentAndCover_ReturnBytes(t *testing.T) {
-	r := &Repo{db: testdb.Open(t)}
-	b, c := newBook("Cat", models.BookPublished)
+	b, c := newBook("Cat", models.BookDraft)
 	require.NoError(t, r.Create(b, c))
-
-	full, err := r.GetWithContent(b.ID)
-	require.NoError(t, err)
-	assert.Equal(t, []byte("EPUB"), full.EpubContent)
 
 	cover, err := r.GetCover(b.ID)
 	require.NoError(t, err)

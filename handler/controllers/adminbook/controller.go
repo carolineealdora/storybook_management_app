@@ -79,6 +79,20 @@ func (c *Controller) Delete(ec echo.Context) error {
 	return ec.NoContent(http.StatusNoContent)
 }
 
+// Cover serves GET /books/:id/cover (path kept for the back-office frontend).
+func (c *Controller) Cover(ec echo.Context) error {
+	id, err := helpers.PathUUID(ec, "id")
+	if err != nil {
+		return c.respond(ec, 0, nil, err)
+	}
+	f, err := c.Service.Cover(id)
+	if err != nil {
+		return c.respond(ec, 0, nil, err)
+	}
+	ec.Response().Header().Set("Cache-Control", "private, max-age=3600")
+	return ec.Blob(http.StatusOK, f.MimeType, f.Content)
+}
+
 func (c *Controller) respond(ec echo.Context, status int, data any, err error) error {
 	return c.Response.CommonResponse(models.ResponseArgs{Ctx: ec, Status: status, RespData: data, ErrorData: err})
 }

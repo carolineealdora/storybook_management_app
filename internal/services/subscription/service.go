@@ -17,15 +17,8 @@ import (
 
 type (
 	Service interface {
-		GetPlan() (*dto.PlanView, error)
 		GetAdminPlan() (*dto.AdminPlanView, error)
 		UpdatePlan(adminID string, price int, benefits string) (*dto.AdminPlanView, error)
-
-		CreateOrder(userID, idempotencyKey string, expectedPrice int) (*dto.SubscriptionOrderView, error)
-		PayOrder(userID, orderID, result string) (*dto.SubscriptionView, error)
-		Cancel(userID string) (*dto.SubscriptionView, error)
-		History(userID string) ([]dto.SubscriptionView, error)
-		RenewDue() (int, error)
 	}
 
 	ServiceImpl struct {
@@ -37,14 +30,6 @@ type (
 
 func NewService(holder *models.SharedHolder) Service {
 	return &ServiceImpl{subs: subscription.NewRepository(holder), errors: helpers.NewError(holder), now: time.Now}
-}
-
-func (s *ServiceImpl) GetPlan() (*dto.PlanView, error) {
-	p, err := s.plan()
-	if err != nil {
-		return nil, err
-	}
-	return toPlanView(p), nil
 }
 
 // GetAdminPlan is the back-office view: the plan plus its price history, newest first (CR-001-2).

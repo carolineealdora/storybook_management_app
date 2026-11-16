@@ -1,6 +1,7 @@
 package services_mocks
 
 import (
+	"codebase/models"
 	"codebase/models/dto"
 
 	"github.com/stretchr/testify/mock"
@@ -30,4 +31,9 @@ func (m *AdminBookService) Update(id string, in dto.BookInput) (*dto.AdminBook, 
 
 func (m *AdminBookService) Delete(id string) error {
 	return m.Called(id).Error(0)
+}
+
+func (m *AdminBookService) Cover(id string) (*models.BookFile, error) {
+	a := m.Called(id)
+	return ret[*models.BookFile](a, 0), a.Error(1)
 }

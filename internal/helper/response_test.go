@@ -56,33 +56,20 @@ func TestCommonResponse_CustomStatusAndMeta_Returned(t *testing.T) {
 
 func TestCommonResponse_CodedError_MapsToPRDStatus(t *testing.T) {
 	cases := map[string]int{
-		respConst.VALIDATION_ERROR:        400,
-		respConst.INVALID_FILE_FORMAT:     400,
-		respConst.INVALID_AGE_RANGE:       400,
-		respConst.UNAUTHORIZED:            401,
-		respConst.TOKEN_EXPIRED:           401,
-		respConst.REFRESH_TOKEN_EXPIRED:   401,
-		respConst.INVALID_CREDENTIALS:     401,
-		respConst.INVALID_PIN:             401,
-		respConst.INVALID_PASSWORD:        401,
-		respConst.PAYMENT_FAILED:          402,
-		respConst.FORBIDDEN:               403,
-		respConst.BOOK_LOCKED:             403,
-		respConst.BOOK_NOT_FOUND:          404,
-		respConst.ORDER_NOT_FOUND:         404,
-		respConst.PLAN_NOT_FOUND:          404,
-		respConst.NOT_FOUND:               404,
-		respConst.METHOD_NOT_ALLOWED:      405,
-		respConst.BOOK_ALREADY_OWNED:      409,
-		respConst.SUBSCRIPTION_ACTIVE:     409,
-		respConst.BOOK_UNAVAILABLE:        409,
-		respConst.DUPLICATE_REQUEST:       409,
-		respConst.BOOK_NOT_PURCHASABLE:    409,
-		respConst.PIN_NOT_SET:             409,
-		respConst.SUBSCRIPTION_NOT_ACTIVE: 409,
-		respConst.PAYLOAD_TOO_LARGE:       413,
-		respConst.TOO_MANY_ATTEMPTS:       429,
-		respConst.GENERAL_ERROR:           500,
+		respConst.VALIDATION_ERROR:      400,
+		respConst.INVALID_FILE_FORMAT:   400,
+		respConst.INVALID_AGE_RANGE:     400,
+		respConst.UNAUTHORIZED:          401,
+		respConst.TOKEN_EXPIRED:         401,
+		respConst.REFRESH_TOKEN_EXPIRED: 401,
+		respConst.INVALID_CREDENTIALS:   401,
+		respConst.FORBIDDEN:             403,
+		respConst.BOOK_NOT_FOUND:        404,
+		respConst.PLAN_NOT_FOUND:        404,
+		respConst.NOT_FOUND:             404,
+		respConst.METHOD_NOT_ALLOWED:    405,
+		respConst.PAYLOAD_TOO_LARGE:     413,
+		respConst.GENERAL_ERROR:         500,
 	}
 	for code, status := range cases {
 		t.Run(code, func(t *testing.T) {
@@ -140,12 +127,12 @@ func TestCommonResponse_UnknownCode_Returns500(t *testing.T) {
 }
 
 func TestErrorWrap_ErrorString_IncludesCodeAndInfo(t *testing.T) {
-	err := NewError(nil).Wrap(respConst.BOOK_LOCKED, "user u1 book b1")
-	assert.Equal(t, "BOOK_LOCKED: user u1 book b1", err.Error())
+	err := NewError(nil).Wrap(respConst.BOOK_NOT_FOUND, "book b1")
+	assert.Equal(t, "BOOK_NOT_FOUND: book b1", err.Error())
 }
 
 func TestErrCode_CodedPlainAndNil(t *testing.T) {
-	assert.Equal(t, respConst.BOOK_LOCKED, ErrCode(NewError(nil).Wrap(respConst.BOOK_LOCKED, "")))
+	assert.Equal(t, respConst.BOOK_NOT_FOUND, ErrCode(NewError(nil).Wrap(respConst.BOOK_NOT_FOUND, "")))
 	assert.Equal(t, respConst.GENERAL_ERROR, ErrCode(errors.New("boom")))
 	assert.Equal(t, "", ErrCode(nil))
 }

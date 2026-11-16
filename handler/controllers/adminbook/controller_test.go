@@ -6,6 +6,7 @@ import (
 
 	respConst "codebase/internal/constant/response"
 	helpers "codebase/internal/helper"
+	"codebase/models"
 	"codebase/models/dto"
 	"codebase/test/apitest"
 	services_mocks "codebase/test/mock/service"
@@ -128,4 +129,33 @@ func TestDelete_Missing_Returns404(t *testing.T) {
 	c, rec := apitest.Ctx(apitest.Req{Method: http.MethodDelete, Claims: apitest.AdminClaims(), Params: map[string]string{"id": bookID}})
 	require.NoError(t, newCtrl(svc).Delete(c))
 	assert.Equal(t, http.StatusNotFound, rec.Code)
+}
+
+func coverReq(id string) apitest.Req {
+	return apitest.Req{Method: http.MethodGet, Claims: apitest.AdminClaims(), Params: map[string]string{"id": id}}
+}
+
+func TestCover_ReturnsImageBytes(t *testing.T) {
+	svc := new(services_mocks.AdminBookService)
+	svc.On("Cover", bookID).Return(&models.BookFile{MimeType: "image/png", Content: []byte("PNGDATA")}, nil)
+	c, rec := apitest.Ctx(coverReq(bookID))
+	require.NoError(t, newCtrl(svc).Cover(c))
+	assert.Equal(t, http.StatusOK, rec.Code)
+	assert.Equal(t, "image/png", rec.Header().Get("Content-Type"))
+	assert.Equal(t, "private, max-age=3600", rec.Header().Get("Cache-Control"))
+	assert.Equal(t, "PNGDATA", rec.Body.String())
+}
+
+func TestCover_Missing_Returns404(t *testing.T) {
+	svc := new(services_mocks.AdminBookService)
+	svc.On("Cover", bookID).Return(nil, errWrap.Wrap(respConst.BOOK_NOT_FOUND, ""))
+	c, rec := apitest.Ctx(coverReq(bookID))
+	require.NoError(t, newCtrl(svc).Cover(c))
+	assert.Equal(t, http.StatusNotFound, rec.Code)
+}
+
+func TestCover_BadID_Returns400(t *testing.T) {
+	c, rec := apitest.Ctx(coverReq("nope"))
+	require.NoError(t, newCtrl(new(services_mocks.AdminBookService)).Cover(c))
+	assert.Equal(t, respConst.VALIDATION_ERROR, apitest.ErrCode(t, rec))
 }

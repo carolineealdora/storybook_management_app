@@ -31,6 +31,7 @@ type (
 		Create(in dto.BookInput) (*dto.AdminBook, error)
 		Update(id string, in dto.BookInput) (*dto.AdminBook, error)
 		Delete(id string) error
+		Cover(id string) (*models.BookFile, error)
 	}
 
 	ServiceImpl struct {
@@ -107,6 +108,18 @@ func (s *ServiceImpl) Delete(id string) error {
 		return s.errors.Wrap(respConst.GENERAL_ERROR, err.Error())
 	}
 	return nil
+}
+
+// Cover returns the cover of any book the admin can see, drafts included.
+func (s *ServiceImpl) Cover(id string) (*models.BookFile, error) {
+	f, err := s.books.GetCover(id)
+	if errors.Is(err, gorm.ErrRecordNotFound) {
+		return nil, s.errors.Wrap(respConst.BOOK_NOT_FOUND, "cover "+id)
+	}
+	if err != nil {
+		return nil, s.errors.Wrap(respConst.GENERAL_ERROR, err.Error())
+	}
+	return f, nil
 }
 
 // live returns a book that exists and is not soft-deleted.

@@ -22,13 +22,13 @@ func newCtrl(svc *services_mocks.AuthService) *Controller {
 
 var errWrap = helpers.NewError(nil)
 
-func TestLogin_ValidBody_Returns200WithTokens(t *testing.T) {
+func TestAdminLogin_ValidBody_Returns200WithTokens(t *testing.T) {
 	svc := new(services_mocks.AuthService)
-	svc.On("Login", "parent@example.com", "pw-123456", models.AccountParent).
-		Return(&dto.TokenResponse{AccessToken: "at", RefreshToken: "rt", TokenType: "Bearer", ExpiresIn: 1800, AccountType: "parent"}, nil)
-	c, rec := apitest.Ctx(apitest.Req{Method: http.MethodPost, Body: `{"email":"parent@example.com","password":"pw-123456"}`})
+	svc.On("Login", "admin@example.com", "pw-123456", models.AccountAdmin).
+		Return(&dto.TokenResponse{AccessToken: "at", RefreshToken: "rt", TokenType: "Bearer", ExpiresIn: 1800, AccountType: "admin"}, nil)
+	c, rec := apitest.Ctx(apitest.Req{Method: http.MethodPost, Body: `{"email":"admin@example.com","password":"pw-123456"}`})
 
-	require.NoError(t, newCtrl(svc).Login(c))
+	require.NoError(t, newCtrl(svc).AdminLogin(c))
 	assert.Equal(t, http.StatusOK, rec.Code)
 	var got dto.TokenResponse
 	apitest.Data(t, rec, &got)
@@ -36,32 +36,32 @@ func TestLogin_ValidBody_Returns200WithTokens(t *testing.T) {
 	assert.Equal(t, "rt", got.RefreshToken)
 }
 
-func TestLogin_MissingPassword_Returns400Validation(t *testing.T) {
+func TestAdminLogin_MissingPassword_Returns400Validation(t *testing.T) {
 	svc := new(services_mocks.AuthService)
-	c, rec := apitest.Ctx(apitest.Req{Method: http.MethodPost, Body: `{"email":"parent@example.com"}`})
-	require.NoError(t, newCtrl(svc).Login(c))
+	c, rec := apitest.Ctx(apitest.Req{Method: http.MethodPost, Body: `{"email":"admin@example.com"}`})
+	require.NoError(t, newCtrl(svc).AdminLogin(c))
 	assert.Equal(t, http.StatusBadRequest, rec.Code)
 	assert.Equal(t, respConst.VALIDATION_ERROR, apitest.ErrCode(t, rec))
 	svc.AssertNotCalled(t, "Login")
 }
 
-func TestLogin_InvalidEmail_Returns400Validation(t *testing.T) {
+func TestAdminLogin_InvalidEmail_Returns400Validation(t *testing.T) {
 	c, rec := apitest.Ctx(apitest.Req{Method: http.MethodPost, Body: `{"email":"nope","password":"x"}`})
-	require.NoError(t, newCtrl(new(services_mocks.AuthService)).Login(c))
+	require.NoError(t, newCtrl(new(services_mocks.AuthService)).AdminLogin(c))
 	assert.Equal(t, respConst.VALIDATION_ERROR, apitest.ErrCode(t, rec))
 }
 
-func TestLogin_MalformedJSON_Returns400Validation(t *testing.T) {
+func TestAdminLogin_MalformedJSON_Returns400Validation(t *testing.T) {
 	c, rec := apitest.Ctx(apitest.Req{Method: http.MethodPost, Body: `{"email":`})
-	require.NoError(t, newCtrl(new(services_mocks.AuthService)).Login(c))
+	require.NoError(t, newCtrl(new(services_mocks.AuthService)).AdminLogin(c))
 	assert.Equal(t, respConst.VALIDATION_ERROR, apitest.ErrCode(t, rec))
 }
 
-func TestLogin_BadCredentials_Returns401(t *testing.T) {
+func TestAdminLogin_BadCredentials_Returns401(t *testing.T) {
 	svc := new(services_mocks.AuthService)
-	svc.On("Login", "parent@example.com", "bad", models.AccountParent).Return(nil, errWrap.Wrap(respConst.INVALID_CREDENTIALS, "x"))
-	c, rec := apitest.Ctx(apitest.Req{Method: http.MethodPost, Body: `{"email":"parent@example.com","password":"bad"}`})
-	require.NoError(t, newCtrl(svc).Login(c))
+	svc.On("Login", "admin@example.com", "bad", models.AccountAdmin).Return(nil, errWrap.Wrap(respConst.INVALID_CREDENTIALS, "x"))
+	c, rec := apitest.Ctx(apitest.Req{Method: http.MethodPost, Body: `{"email":"admin@example.com","password":"bad"}`})
+	require.NoError(t, newCtrl(svc).AdminLogin(c))
 	assert.Equal(t, http.StatusUnauthorized, rec.Code)
 	assert.Equal(t, respConst.INVALID_CREDENTIALS, apitest.ErrCode(t, rec))
 }
