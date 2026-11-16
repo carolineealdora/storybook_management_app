@@ -32,11 +32,8 @@ type migratorImpl struct {
 	order     []string
 }
 
-func NewMigrator(orm sql.ORM, tableName, path string, scripts map[string]SQLMigration) Migrator {
-	order := make([]string, 0, len(scripts))
-	for name := range scripts {
-		order = append(order, name)
-	}
+// NewMigrator applies scripts in the given order (map iteration order is random, so it is never used for ordering).
+func NewMigrator(orm sql.ORM, tableName, path string, order []string, scripts map[string]SQLMigration) Migrator {
 	return &migratorImpl{orm: orm, tableName: tableName, path: path, scripts: scripts, order: order}
 }
 

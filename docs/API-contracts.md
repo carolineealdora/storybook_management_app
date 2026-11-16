@@ -1,441 +1,165 @@
-# API Contracts
-**Base URL:** `https://api.vivasports.id/api/v1`
-**Last updated:** [date]
+# API Contracts — Storybook Back Office
+**Base URL:** `/api/v1` (local: `http://localhost:9999/api/v1`)
+**Last updated:** 2026-11-16
+**Source of truth for:** the Book Management app (`fe_storybook_management_app`, admin only).
+**Parent/child endpoints** are served by storybook_library_app; see that repo's `docs/API-contracts.md` ([ADR-011](DECISIONS.md#adr-011)).
+Behaviour follows [PRD_storybook-lib-app.md](PRD_storybook-lib-app.md) and [CR-001](CR-001_Badge_and_Subscription_Pricing.md); user story (US-), edge case (E-, E-CR) ids are referenced inline.
 
-This document defines the contract for every API endpoint: method, path, auth requirement, request shape, success response, and error codes. It is the authoritative reference for both backend implementation and frontend integration.
-
-**Rules:**
-- Update this document when adding, changing, or removing any endpoint
-- Endpoint changes are breaking if they alter the request shape, response shape, or error codes
-- Breaking changes require a new API version prefix (`/api/v2/...`)
+Update this file whenever an endpoint's request, response, or error codes change.
 
 ---
 
-## How to read this document
+## Conventions
 
-Each endpoint follows this structure:
+### Auth
+Send `Authorization: Bearer <access_token>` on every endpoint except those marked **Public**.
 
-```
-### [METHOD] /path
-Auth:     Required | Public | Admin only
-Purpose:  One sentence.
+| Token | Lifetime | Notes |
+|---|---|---|
+| Access token (JWT, HS256) | 30 min | Claims: `sub` (credential id), `account_type` (`parent`/`admin`), `user_id` or `admin_id` |
+| Refresh token (opaque) | 7 days | Stored hashed server-side; revoked on logout |
 
-Request body (if applicable):
-Response (success):
-Error codes:
-```
+When a request returns `401 TOKEN_EXPIRED`, call `POST /auth/refresh` and retry. `401 REFRESH_TOKEN_EXPIRED` or `401 UNAUTHORIZED` from refresh means the user goes back to the Login page (E20, E21).
 
-**Standard error response shape** (all errors):
+**Roles:** every protected endpoint here requires an admin token; a parent token gets `403 FORBIDDEN` (E17).
+
+### Envelopes
+Success, single resource:
 ```json
-{
-  "error": {
-    "code": "MACHINE_READABLE_CODE",
-    "message": "Human-readable description.",
-    "fields": {}
-  }
-}
+{ "data": { } }
 ```
-
-**Standard collection response shape:**
+Success, list (no pagination; every list returns all rows):
 ```json
-{
-  "data": [],
-  "meta": { "total": 0, "page": 1, "page_size": 20 }
-}
+{ "data": [ ], "meta": { "total": 3 } }
 ```
-
-**Standard single-resource response shape:**
+Error (all errors):
 ```json
-{
-  "data": {}
-}
+{ "error": { "code": "BOOK_LOCKED", "message": "Subscribe or purchase this book to read it." } }
 ```
+`message` is safe to show to the user. For `VALIDATION_ERROR` it names the failing field, e.g. `"pin must be exactly 4 characters long."`
 
----
+The binary endpoint (`/books/:id/cover`) returns raw bytes on success and the JSON error envelope on failure.
 
-## Auth
+Every response carries an `X-Request-Id` header. Send your own to correlate logs.
 
-### POST /auth/login
-Auth: Public
+### Money, ids, times
+- Prices are **whole IDR** integers (`15000` = Rp 15.000). `0` = free.
+- Ids are UUIDs. A malformed id in the path returns `400 VALIDATION_ERROR`.
+- Times are RFC 3339 (UTC).
 
-Request:
-```json
-{ "email": "string", "password": "string" }
-```
-
-Response `201`:
-```json
-{
-  "data": {
-    "access_token":  "string (JWT, 15-min TTL)",
-    "refresh_token": "string (opaque, 7-day TTL)",
-    "expires_in":    900
-  }
-}
-```
-
-Error codes:
+### Error codes
 | Code | HTTP | When |
 |---|---|---|
-| `INVALID_CREDENTIALS` | 401 | Email not found or password incorrect |
-| `VALIDATION_ERROR` | 422 | Missing required fields |
+| `VALIDATION_ERROR` | 400 | Missing/malformed field, bad JSON, non-UUID id |
+| `INVALID_FILE_FORMAT` | 400 | Cover not .jpg/.jpeg/.png or book file not .epub (E15) |
+| `INVALID_AGE_RANGE` | 400 | Age not a whole number, or min ≥ max (E16) |
+| `INVALID_PRICE` | 400 | Subscription plan price ≤ 0 (E-CR2) |
+| `UNAUTHORIZED` | 401 | No or invalid token, or the refresh token is unknown or revoked (E19) |
+| `TOKEN_EXPIRED` | 401 | Access token expired: refresh and retry (E20) |
+| `REFRESH_TOKEN_EXPIRED` | 401 | Refresh token older than 7 days (E21) |
+| `INVALID_CREDENTIALS` | 401 | Login email or password wrong |
+| `FORBIDDEN` | 403 | Wrong account type for this app/endpoint (US-15, E17) |
+| `BOOK_NOT_FOUND` | 404 | Book missing, unpublished, or deleted (E22) |
+| `PLAN_NOT_FOUND` | 404 | Subscription plan not configured yet |
+| `NOT_FOUND` | 404 | Unknown route |
+| `PAYLOAD_TOO_LARGE` | 413 | Cover > 5 MB, EPUB > 50 MB, or request > 60 MB |
+| `GENERAL_ERROR` | 500 | Unexpected; details are logged, never returned |
 
 ---
+
+## Auth (shared by the back office)
 
 ### POST /auth/refresh
-Auth: Public
-
-Request:
+Auth: Public. **Admin refresh tokens only.** The `refresh_tokens` table is shared with storybook_library_app, so a parent refresh token gets `401 UNAUTHORIZED`.
 ```json
-{ "refresh_token": "string" }
+{ "refresh_token": "…" }
 ```
+`200`: same as admin login, without `refresh_token`. Errors: `UNAUTHORIZED`, `REFRESH_TOKEN_EXPIRED`
 
-Response `200`:
-```json
-{
-  "data": {
-    "access_token": "string (new JWT)",
-    "expires_in":   900
-  }
-}
-```
-
-Error codes:
-| Code | HTTP | When |
-|---|---|---|
-| `INVALID_REFRESH_TOKEN` | 401 | Token not found, expired, or already rotated |
+### GET /books/:id/cover
+Auth: Admin. Raw image (`image/png` or `image/jpeg`), `Cache-Control: private, max-age=3600`. Works for drafts. The path has no `/admin` prefix for frontend compatibility.
+Because it needs the Authorization header, load it with `fetch` → `blob` → object URL (a plain `<img src>` cannot send the header).
+Errors: `BOOK_NOT_FOUND`
 
 ---
 
-### POST /auth/logout
-Auth: Required
+## Book Management app (admin)
 
-Request:
+### POST /admin/auth/login
+Auth: Public. A parent account gets `403 FORBIDDEN`.
 ```json
-{ "refresh_token": "string" }
+{ "email": "admin@example.com", "password": "…" }
+```
+`200`
+```json
+{ "data": { "access_token": "…", "refresh_token": "…", "token_type": "Bearer", "expires_in": 1800, "account_type": "admin" } }
+```
+Errors: `VALIDATION_ERROR`, `INVALID_CREDENTIALS`, `FORBIDDEN`
+
+### POST /admin/auth/logout
+Auth: Admin. `{ "refresh_token": "…" }` → `204`
+
+### GET /admin/books
+Auth: Admin. Query: `search` (title, case-insensitive), `status` (`draft` | `published`). Excludes deleted books. `AdminBook[]` + `meta.total`.
+
+**AdminBook**
+```json
+{ "id": "uuid", "title": "…", "author": "…", "description": "…",
+  "age_type": "range | plus", "age_min": 1, "age_max": 3, "age_label": "1–3",
+  "price": 15000, "status": "draft | published", "cover_url": "/api/v1/books/{id}/cover",
+  "epub_file_name": "book.epub", "epub_size_bytes": 1048576, "created_at": "…", "updated_at": "…" }
 ```
 
-Response `204`: No body.
+### GET /admin/books/:id
+Auth: Admin. `AdminBook` (drafts included). Errors: `BOOK_NOT_FOUND` (missing or deleted)
+
+### POST /admin/books
+Auth: Admin. `multipart/form-data`:
+
+| Field | Rule |
+|---|---|
+| `title`, `author`, `description` | required |
+| `age_type` | `range` or `plus` |
+| `age_min` | whole number ≥ 0 |
+| `age_max` | `range`: whole number > `age_min`; `plus`: omit |
+| `price` | whole number ≥ 0 (0 = free) |
+| `status` | `draft` or `published` |
+| `cover` | file, .jpg/.jpeg/.png, ≤ 5 MB, content must be JPEG/PNG |
+| `epub` | file, .epub, ≤ 50 MB, must be an EPUB (ZIP with `application/epub+zip` mimetype) |
+
+`201` → `AdminBook`. Errors: `VALIDATION_ERROR`, `INVALID_AGE_RANGE`, `INVALID_FILE_FORMAT`, `PAYLOAD_TOO_LARGE`
+
+### PUT /admin/books/:id
+Auth: Admin. Same form; all text fields required. `cover` and `epub` are **optional**: omit them to keep the stored files. A new price applies to new orders only. `200` → `AdminBook`.
+
+### DELETE /admin/books/:id
+Auth: Admin. Soft delete → `204`. The book disappears from the showcase and admin list; owners keep it in My Book (E5). Errors: `BOOK_NOT_FOUND`
+
+### GET /admin/subscription-plan
+Auth: Admin. **AdminPlan**: the plan, who last edited it, and its price history (newest first).
+```json
+{ "data": { "id": "uuid", "code": "monthly", "name": "Monthly Subscription", "price": 59000,
+            "benefits": "…", "duration": "1 month", "updated_at": "…", "updated_by": "admin uuid | null",
+            "price_history": [ { "id": "uuid", "old_price": 49000, "new_price": 59000,
+                                 "changed_by": "admin uuid", "changed_at": "…" } ] } }
+```
+Errors: `PLAN_NOT_FOUND`
+
+### PUT /admin/subscription-plan
+Auth: Admin.
+```json
+{ "price": 59000, "benefits": "Read all published books." }
+```
+`200` → AdminPlan.
+- `price` must be a whole number > 0, otherwise `400 INVALID_PRICE` (E-CR2). A non-number is `400 VALIDATION_ERROR`. `benefits` is required.
+- New subscribers pay the new price immediately. Active subscribers keep their `price_paid` until their next renewal, which charges the new price (US-17, CR-001-2).
+- A price change writes a `price_history` row. The same price writes no row (E-CR6); the same price and benefits writes nothing.
+- Before saving, the back-office confirms: "New subscribers will pay Rp [new] immediately. Existing subscribers will pay Rp [new] from their next renewal."
+- Errors: `INVALID_PRICE`, `VALIDATION_ERROR`, `FORBIDDEN` (parent token, E-CR3)
 
 ---
 
-## Members
+## Other
 
-### GET /members/me
-Auth: Required
-Purpose: Get the authenticated member's own profile.
-
-Response `200`:
-```json
-{
-  "data": {
-    "id":              "uuid",
-    "full_name":       "string",
-    "email":           "string",
-    "phone":           "string",
-    "membership_tier": "standard | silver | gold | platinum",
-    "credits_balance": 0,
-    "joined_at":       "ISO8601"
-  }
-}
-```
-
----
-
-### PATCH /members/me
-Auth: Required
-Purpose: Update the authenticated member's own profile.
-
-Request (all fields optional — only provided fields are updated):
-```json
-{
-  "full_name": "string",
-  "phone":     "string"
-}
-```
-
-Response `200`: Updated member object (same shape as GET /members/me).
-
-Error codes:
-| Code | HTTP | When |
-|---|---|---|
-| `VALIDATION_ERROR` | 422 | Field fails validation (e.g. invalid phone format) |
-
----
-
-## Courts
-
-### GET /courts
-Auth: Public
-Purpose: List all active courts, optionally filtered by location.
-
-Query params:
-| Param | Type | Required | Description |
-|---|---|---|---|
-| `location_id` | uuid | No | Filter by location |
-| `court_type` | string | No | `padel`, `tennis`, `futsal` |
-
-Response `200`:
-```json
-{
-  "data": [
-    {
-      "id":          "uuid",
-      "name":        "Court A",
-      "court_type":  "padel",
-      "location_id": "uuid",
-      "location_name": "Viva Sports Club — Kemang"
-    }
-  ],
-  "meta": { "total": 4, "page": 1, "page_size": 20 }
-}
-```
-
----
-
-### GET /courts/:id/availability
-Auth: Public
-Purpose: Return available and unavailable slots for a given court on a given date.
-
-Query params:
-| Param | Type | Required | Description |
-|---|---|---|---|
-| `date` | string | Yes | Format: `YYYY-MM-DD` |
-
-Response `200`:
-```json
-{
-  "data": {
-    "court_id": "uuid",
-    "date":     "2025-07-01",
-    "slots": [
-      {
-        "start":    "07:00",
-        "end":      "08:00",
-        "status":   "available | booked | held",
-        "price_idr": 15000000
-      }
-    ]
-  }
-}
-```
-
-Error codes:
-| Code | HTTP | When |
-|---|---|---|
-| `INVALID_DATE` | 422 | Date is in the past or invalid format |
-| `COURT_NOT_FOUND` | 404 | Court ID does not exist |
-
----
-
-## Bookings
-
-### POST /bookings/hold
-Auth: Required
-Purpose: Temporarily hold a slot for 5 minutes while the member proceeds to payment.
-
-Request:
-```json
-{
-  "court_id":   "uuid",
-  "date":       "YYYY-MM-DD",
-  "start_time": "HH:MM",
-  "end_time":   "HH:MM"
-}
-```
-
-Response `201`:
-```json
-{
-  "data": {
-    "hold_id":    "uuid",
-    "expires_at": "ISO8601",
-    "ttl_seconds": 300
-  }
-}
-```
-
-Error codes:
-| Code | HTTP | When |
-|---|---|---|
-| `SLOT_UNAVAILABLE` | 409 | Slot is already booked or held |
-| `INVALID_DATE_RANGE` | 422 | start_time in past, or end before start |
-| `VALIDATION_ERROR` | 422 | Missing or malformed fields |
-
----
-
-### POST /bookings
-Auth: Required
-Purpose: Create a booking and initiate payment. Must have a valid hold from POST /bookings/hold.
-
-Request:
-```json
-{
-  "hold_id":       "uuid",
-  "payment_method": "xendit_va | xendit_qris | xendit_cc"
-}
-```
-
-Response `201`:
-```json
-{
-  "data": {
-    "booking_id":      "uuid",
-    "booking_ref":     "VIV-20250701-0042",
-    "status":          "pending_payment",
-    "total_amount_idr": 15000000,
-    "payment": {
-      "method":     "xendit_va",
-      "expires_at": "ISO8601",
-      "va_number":  "string (if VA method)",
-      "qr_string":  "string (if QRIS method)"
-    }
-  }
-}
-```
-
-Error codes:
-| Code | HTTP | When |
-|---|---|---|
-| `HOLD_EXPIRED` | 409 | Hold TTL elapsed before booking was created |
-| `HOLD_NOT_FOUND` | 404 | hold_id not found or does not belong to this member |
-| `PAYMENT_INITIATION_FAILED` | 502 | Xendit returned an error |
-
----
-
-### GET /bookings
-Auth: Required
-Purpose: List the authenticated member's own bookings.
-
-Query params:
-| Param | Type | Required | Default |
-|---|---|---|---|
-| `status` | string | No | all |
-| `page` | int | No | 1 |
-| `page_size` | int | No | 20 (max 100) |
-
-Response `200`: Collection of booking summaries.
-```json
-{
-  "data": [
-    {
-      "id":           "uuid",
-      "booking_ref":  "VIV-20250701-0042",
-      "court_name":   "Court A",
-      "date":         "2025-07-01",
-      "start_time":   "07:00",
-      "end_time":     "08:00",
-      "status":       "confirmed | pending_payment | cancelled | no_show",
-      "total_amount_idr": 15000000
-    }
-  ],
-  "meta": { "total": 12, "page": 1, "page_size": 20 }
-}
-```
-
----
-
-### GET /bookings/:id
-Auth: Required
-Purpose: Get full detail of a single booking.
-
-Response `200`: Full booking object.
-
-Error codes:
-| Code | HTTP | When |
-|---|---|---|
-| `BOOKING_NOT_FOUND` | 404 | Booking not found, or belongs to a different member |
-
-> Returns 404 (not 403) on cross-member access — do not leak that the booking exists.
-
----
-
-### DELETE /bookings/:id
-Auth: Required
-Purpose: Cancel a pending booking. Sets status to `cancelled`.
-
-Response `204`: No body.
-
-Error codes:
-| Code | HTTP | When |
-|---|---|---|
-| `BOOKING_NOT_FOUND` | 404 | Booking not found or belongs to another member |
-| `CANNOT_CANCEL_CONFIRMED` | 409 | Booking is already confirmed (approved) |
-| `CANCELLATION_WINDOW_CLOSED` | 409 | Inside the no-cancellation window |
-
----
-
-## Webhooks
-
-### POST /webhooks/xendit
-Auth: Public — HMAC-verified (X-CALLBACK-TOKEN header)
-Purpose: Receive payment status updates from Xendit.
-
-> This endpoint is called by Xendit, not by the frontend.
-> Verify the `X-CALLBACK-TOKEN` header before processing. Reject unsigned requests with 401.
-> This endpoint must be idempotent — duplicate webhooks for the same `xendit_payment_id` must not create duplicate bookings.
-
-Request body: Xendit webhook payload (see Xendit docs for full schema).
-
-Relevant fields:
-```json
-{
-  "external_id": "string (our booking_id)",
-  "status":      "PAID | EXPIRED | FAILED",
-  "id":          "string (xendit_payment_id — idempotency key)"
-}
-```
-
-Response `200`: Always respond 200 quickly. Xendit retries on non-2xx or timeout > 30s.
-
----
-
-## Admin endpoints
-
-> All `/admin/` endpoints require `admin` role in JWT claims.
-
-### GET /admin/bookings
-Auth: Admin only
-Purpose: List all bookings across all members, filterable.
-
-Query params: `status`, `location_id`, `date_from`, `date_to`, `page`, `page_size`
-
----
-
-### PATCH /admin/bookings/:id/status
-Auth: Admin only
-Purpose: Manually override a booking status (e.g. mark as `no_show`).
-
-Request:
-```json
-{ "status": "no_show | cancelled | confirmed" }
-```
-
-Response `200`: Updated booking object.
-
----
-
-## Adding a new endpoint
-
-Copy this block and fill in all fields:
-
-```markdown
-### [METHOD] /[path]
-Auth: Required | Public | Admin only
-Purpose: [one sentence]
-
-Request:
-```json
-{}
-```
-
-Response `[status]`:
-```json
-{}
-```
-
-Error codes:
-| Code | HTTP | When |
-|---|---|---|
-| `` |  |  |
-```
+### GET /healthcheck
+Auth: Public. `{ "data": { "database": "UP | DOWN" } }`

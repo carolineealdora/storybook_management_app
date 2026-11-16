@@ -3,131 +3,79 @@ package handler
 import (
 	"bytes"
 	"context"
-	"fmt"
-	"sync"
 
+	"codebase/handler/controllers/adminbook"
+	"codebase/handler/controllers/auth"
 	"codebase/handler/controllers/healthcheck"
-	"codebase/handler/controllers/payment"
+	"codebase/handler/controllers/subscription"
 	"codebase/internal/constant/key"
-	respConst "codebase/internal/constant/response"
 	helpers "codebase/internal/helper"
 	"codebase/models"
 
 	"github.com/labstack/echo/v4"
 	"github.com/labstack/echo/v4/middleware"
-	"github.com/pkg/errors"
 	"go.elastic.co/apm/module/apmechov4/v2"
 )
 
+// InitRoute registers middleware and routes on sharedHolder.Echo. It does not start the server.
 func InitRoute(sharedHolder *models.SharedHolder) {
-	sharedHolder.Echo.Use(func(next echo.HandlerFunc) echo.HandlerFunc {
+	e := sharedHolder.Echo
+	e.HTTPErrorHandler = helpers.NewHTTPErrorHandler(sharedHolder)
+
+	e.Use(middleware.Recover())
+	e.Use(middleware.RequestID())
+	e.Use(func(next echo.HandlerFunc) echo.HandlerFunc {
 		return func(c echo.Context) error {
-			requestId := c.Request().Header.Get("x-request-id")
-			url := c.Request().URL.String()
-			method := c.Request().Method
-
-			// set request id on ctx
-			ctx := c.Request().Context()
-			ctx = context.WithValue(ctx, key.RequestId, requestId)
+			requestID := c.Response().Header().Get(echo.HeaderXRequestID)
+			ctx := context.WithValue(c.Request().Context(), key.RequestId, requestID)
 			c.SetRequest(c.Request().WithContext(ctx))
-
-			// init handlers
-			response := helpers.NewResponse(sharedHolder)
-			validation := helpers.NewValidation(c, sharedHolder)
-			errors := helpers.NewError(sharedHolder)
-
-			// validate path
-			if err := validation.ValidateRequestedURL(); err != nil {
-				return response.CommonResponse(models.ResponseArgs{
-					Ctx:       c,
-					ErrorData: err,
-				})
-			}
-
-			// validate method
-			if err := validation.ValidateGetBody(); err != nil {
-				return response.CommonResponse(models.ResponseArgs{
-					Ctx:       c,
-					ErrorData: err,
-				})
-			}
-
-			// validate headers
-			if err := validation.ValidateHeader(); err != nil {
-				return response.CommonResponse(models.ResponseArgs{
-					Ctx:       c,
-					ErrorData: errors.Wrap(respConst.INVALID_REQUEST_HEADER, err.Error()),
-				})
-			}
-
-			// restricting requests based on x-request-id data
-			key := fmt.Sprintf("%s-%s-%s", requestId, url, method)
-			data := sharedHolder.Redis.Exists(context.Background(), key)
-			if data.Val() > 0 {
-				return response.CommonResponse(models.ResponseArgs{
-					Ctx: c,
-					ErrorData: errors.Wrap(respConst.CAN_NOT_ACCESS_API,
-						"Redis failed: redis key already exists"),
-				})
-			}
-			sharedHolder.Redis.Set(context.Background(), key, "", -1)
-
-			// process the request (call the next handler)
-			err := next(c)
-
-			_ = sharedHolder.Redis.Del(context.Background(), key)
-
-			return err
+			return next(c)
 		}
 	})
-
-	//init controller here
-	healthcheckCtrl := healthcheck.NewController(sharedHolder)
-	paymentCtrl := payment.NewController(sharedHolder)
-
-	sharedHolder.Echo.Use(apmechov4.Middleware())
-	sharedHolder.Echo.Use(middleware.LoggerWithConfig(middleware.LoggerConfig{
-		Format: "[${time_rfc3339}] | ${status} | ${method} ${path} | ${latency_human} | ip=${remote_ip} | request_id=${custom}\n",
-		Output: sharedHolder.Echo.Logger.Output(),
+	e.Use(middleware.CORSWithConfig(middleware.CORSConfig{
+		AllowOrigins:  sharedHolder.Config.CORSAllowOrigins,
+		AllowHeaders:  []string{echo.HeaderAuthorization, echo.HeaderContentType, echo.HeaderXRequestID},
+		ExposeHeaders: []string{echo.HeaderXRequestID},
+	}))
+	e.Use(apmechov4.Middleware())
+	// Access log only: method, path, status, latency. Bodies are never logged (passwords, PINs, tokens, EPUBs).
+	e.Use(middleware.LoggerWithConfig(middleware.LoggerConfig{
+		Format: "[${time_rfc3339}] | ${status} | ${method} ${path} | ${latency_human} | ip=${remote_ip} | request_id=${id}\n",
+		Output: e.Logger.Output(),
 		CustomTagFunc: func(c echo.Context, buf *bytes.Buffer) (int, error) {
-			reqId := "-"
-			if reqIdData := c.Request().Context().Value(key.RequestId); reqIdData != nil {
-				reqId = reqIdData.(string)
-			}
-
-			return buf.Write([]byte(reqId))
+			return buf.WriteString(c.Response().Header().Get(echo.HeaderXRequestID))
 		},
 	}))
 
-	// loging middleware
-	sharedHolder.Echo.Use(middleware.BodyDump(func(c echo.Context, reqBody, resBody []byte) {
-		respBodyDump := make(chan error)
-		customMiddleware := helpers.NewMiddleware(sharedHolder)
+	healthcheckCtrl := healthcheck.NewController(sharedHolder)
+	authCtrl := auth.NewController(sharedHolder)
+	adminBookCtrl := adminbook.NewController(sharedHolder)
+	subscriptionCtrl := subscription.NewController(sharedHolder)
 
-		wg := &sync.WaitGroup{}
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
-			respBodyDump <- customMiddleware.BodyDumpHandler(c, reqBody, resBody)
-		}()
-		go func() {
-			wg.Wait()
-			close(respBodyDump)
-		}()
-	}))
+	adminOnly := helpers.RequireAccount(sharedHolder, models.AccountAdmin)
 
-	//insert route here
-	v1 := sharedHolder.Echo.Group("/api/v1")
+	v1 := e.Group("/api/v1")
+	v1.GET("/healthcheck", healthcheckCtrl.GetHealthcheck) // PUBLIC
 
-	healthcheckGroup := v1.Group("/healthcheck")
-	healthcheckGroup.GET("", healthcheckCtrl.GetHealthcheck)
+	// SECURITY: manual review required
+	// This backend serves only fe_storybook_management_app (ADR-011). Parent endpoints live in
+	// storybook_library_app, which enforces the parent-mode token and Forgot PIN lockout.
+	v1.POST("/auth/refresh", authCtrl.Refresh)                 // PUBLIC — admin refresh tokens only
+	v1.GET("/books/:id/cover", adminBookCtrl.Cover, adminOnly) // path kept for the frontend
 
-	paymentGroup := v1.Group("/payment")
-	paymentGroup.GET("/ref/:refId", paymentCtrl.GetByRefId)
+	// --- Book Management app (admin) ---
+	admin := v1.Group("/admin")
+	admin.POST("/auth/login", authCtrl.AdminLogin) // PUBLIC
+	admin.POST("/auth/logout", authCtrl.Logout, adminOnly)
 
-	err := sharedHolder.Echo.Start("0.0.0.0:" + sharedHolder.Config.Port)
-	if err != nil {
-		sharedHolder.Log.Fatal(errors.Wrap(err, "failed to start echo"))
-		return
-	}
+	// Uploads are capped per file in the service; this caps the whole request (cover + EPUB + fields).
+	adminBooks := admin.Group("/books", adminOnly, middleware.BodyLimit("60M"))
+	adminBooks.GET("", adminBookCtrl.List)
+	adminBooks.POST("", adminBookCtrl.Create)
+	adminBooks.GET("/:id", adminBookCtrl.Get)
+	adminBooks.PUT("/:id", adminBookCtrl.Update)
+	adminBooks.DELETE("/:id", adminBookCtrl.Delete)
+
+	admin.GET("/subscription-plan", subscriptionCtrl.GetAdminPlan, adminOnly)
+	admin.PUT("/subscription-plan", subscriptionCtrl.PutPlan, adminOnly)
 }

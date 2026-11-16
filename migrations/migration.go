@@ -4,28 +4,32 @@ import (
 	"os"
 
 	"codebase/models"
-	sql "codebase/pkg/orm"
 	"codebase/pkg/migrator/postgres"
+	sql "codebase/pkg/orm"
 )
 
-var (
-	scripts    = map[string]postgres.SQLMigration{}
-	migrations = []string{
-		"20250806084945_create_payment_table",
-	}
-)
+// migrations is the apply order. Append new files; never reorder or rename applied ones.
+var migrations = []string{
+	"20261116000001_create_storybook_schema",
+	"20261117000001_cr001_plan_price_history",
+	"20261117000002_merge_library_schema",
+}
+
+// Ordered returns the migration names in apply order.
+func Ordered() []string { return append([]string(nil), migrations...) }
 
 func NewMigration(holder models.SharedHolder) postgres.Migrator {
+	scripts := map[string]postgres.SQLMigration{}
 	for _, migration := range migrations {
 		scripts[migration] = postgres.SQLMigration{
 			Up: LoadSQLScript("./migrations/" + migration + ".sql"),
 		}
 	}
 
-	migrator := postgres.NewMigrator(holder.Sql, "migrations", "./migrations/", scripts)
+	migrator := postgres.NewMigrator(holder.Sql, "migrations", "./migrations/", migrations, scripts)
 
 	if err := migrator.Init(); err != nil {
-		holder.Log.Debug(err)
+		holder.Log.Error(err)
 	}
 
 	return migrator
@@ -37,7 +41,6 @@ func LoadSQLScript(path string) postgres.SQLScript {
 		if err != nil {
 			return err
 		}
-		err = db.Exec(string(content))
-		return err
+		return db.Exec(string(content))
 	}
 }

@@ -1,384 +1,82 @@
-# Data Models
-**Last updated:** [date]
+# Data Models — Storybook Library
+**Last updated:** 2026-11-16
+**Schema:** [migrations/20261116000001_create_storybook_schema.sql](../migrations/20261116000001_create_storybook_schema.sql) [20261117000001_cr001_plan_price_history.sql](../migrations/20261117000001_cr001_plan_price_history.sql) and [20261117000002_merge_library_schema.sql](../migrations/20261117000002_merge_library_schema.sql) are the source of truth; this page explains them.
+**Shared:** storybook_library_app uses this same database and schema and has no migrations of its own ([ADR-010](DECISIONS.md#adr-010)).
+**Go structs:** [models/storybook.go](../models/storybook.go)
 
-This document defines every entity in the platform: fields, types, constraints, indexes, and relationships. It is the authoritative reference before writing any migration, domain struct, or repository query.
-
----
-
-## Conventions — read before adding any table
-
+## Conventions
 | Convention | Rule |
 |---|---|
-| Primary keys | `UUID` — `DEFAULT gen_random_uuid()` on all tables |
-| Money | `INTEGER` in smallest currency unit (sen). `150000 = Rp 1.500`. **Never FLOAT.** |
-| Timestamps | `TIMESTAMPTZ NOT NULL DEFAULT NOW()` — always timezone-aware |
-| Audit fields | Every table has `created_at` and `updated_at`. Add `deleted_at` if soft-deletable. |
-| Soft deletes | Use `deleted_at TIMESTAMPTZ` or a `status` enum — never hard-delete records that have financial or audit significance |
-| Enums | Stored as `VARCHAR(N)` with a `CHECK` constraint — not PostgreSQL native enums (easier to migrate) |
-| Naming | `snake_case` for all tables and columns |
-| Foreign keys | Always explicit FK constraint — do not rely on application-level enforcement |
-| Indexes | Add index on every FK column and every column used in WHERE or ORDER BY |
+| Primary keys | `UUID DEFAULT gen_random_uuid()`. Repositories also set ids in Go before insert |
+| Money | `INTEGER` whole IDR. `0` = free. Never float |
+| Timestamps | `TIMESTAMPTZ` |
+| Enums | `VARCHAR` + `CHECK` (no native PG enums) |
+| Soft delete | `books.deleted_at` only. Orders, purchases, and subscriptions are never deleted |
+| Business rules in the DB | Anything that must hold under concurrency is a constraint (see "Invariants") |
+| New tables/columns | Append a new numbered `.sql` file and add it to `migrations` in [migrations/migration.go](../migrations/migration.go). Never edit an applied file. This includes schema the library app needs |
+| Migration order | Filename order **is** apply order: the library app's tests apply `migrations/*.sql` sorted by name. `TestOrdered_MatchesSortedSQLFiles` enforces it |
 
----
-
-## Entity Relationships (overview)
-
+## Entities
 ```
-organizations ──< locations ──< courts ──< bookings >── members
-                                                 │
-                                           payment_intents
-                                                 │
-                                          xendit_webhooks
+credentials ──1:1── users (parents)          credentials ──1:1── admins
+credentials ──< refresh_tokens
 
-members ──< membership_tiers
-        ──< credits_wallet_transactions
-        ──< leave_requests  [Phase 1 example module]
-
-staff ──< attendance_records
-      ──< shifts
-
-locations ──< lounge_sessions ──< lounge_orders >── menu_items
-          ──< class_sessions  ──< enrollments   >── class_templates
-          ──< events          ──< event_registrations
+users ──< book_orders >── books ──1:1── book_files (cover)
+users ──< purchases   >── books          book_orders ──1:1── purchases
+users ──< subscriptions >── subscription_plans
+users ──< subscription_orders >── subscription_plans
+subscription_orders ──> subscriptions (set when paid)
+subscriptions ──> subscriptions (renewed_from_id)
+subscription_plans ──< subscription_plan_price_history >── admins (changed_by)
+subscription_plans ──> admins (updated_by)
 ```
 
----
+| Table | Purpose | Notable columns |
+|---|---|---|
+| `credentials` | Login for parents and admins | `email` (unique, also unique on `lower(email)`, stored lowercase), `password_hash` (bcrypt), `account_type` `parent`/`admin`; exactly one of `user_id`/`admin_id` (CHECK) |
+| `users` | Parent profile | `name`, `pin_hash` (bcrypt, nullable), `pin_failed_attempts`, `pin_locked_until`, `password_failed_attempts`, `password_locked_until` (Forgot PIN lockout; written only by the library app today) |
+| `admins` | Back-office admin profile | `name` |
+| `refresh_tokens` | Revocable sessions | `token_hash` (SHA-256 hex, unique), `expires_at` (+7 days), `revoked_at` |
+| `books` | Master book | `age_type` `range`/`plus`, `age_min`, `age_max` (range only), `price`, `status` `draft`/`published`, `epub_content BYTEA`, `deleted_at` |
+| `book_files` | Cover image, one per book | `book_id` unique, `mime_type` `image/jpeg`/`image/png`, `content BYTEA` |
+| `subscription_plans` | The single monthly plan | `code` (unique, `monthly`), `name`, `price` (> 0), `benefits`, `duration` `'1 month'`, `updated_by` (admin, nullable for the seeded row) |
+| `subscription_plan_price_history` | Audit of admin price changes (CR-001-2) | `old_price`, `new_price`, `changed_by` (admin), `changed_at`; written in the same transaction as the price update |
+| `subscriptions` | One row per subscription period | `status` `active`/`cancelled`/`expired`, `price_paid`, `started_at`, `expires_at`, `cancelled_at`, `renewed_from_id` |
+| `book_orders` | Single-book checkout (Order History) | `price` (snapshot at checkout), `status` `pending`/`paid`/`failed`, `idempotency_key`, `paid_at` |
+| `subscription_orders` | New and renewal payments | `order_type` `new`/`renewal`, `price` (snapshot), `status`, `idempotency_key`, `subscription_id` |
+| `purchases` | Ownership of a book (My Book) | `price_paid`, `purchased_at`, `book_order_id` (unique) |
 
-## Core tables
+## Invariants enforced by the database
+| Rule | Constraint |
+|---|---|
+| At most one active subscription per user (E3) | `UNIQUE INDEX uq_subscriptions_one_active ON subscriptions(user_id) WHERE status = 'active'` |
+| A book is bought once per user (E1) | `UNIQUE (user_id, book_id)` on `purchases` |
+| Double-tap protection (E8) | `UNIQUE (user_id, idempotency_key)` on both order tables; renewals use key `renewal:<previous subscription id>` |
+| Age range valid (E16) | `CHECK` range ⇒ `age_max` set and `age_min < age_max`; plus ⇒ `age_max` NULL |
+| Prices sane | `CHECK (price >= 0)` on books/orders; `CHECK (price > 0)` on the plan |
+| A history row is a real change (E-CR6) | `CHECK (new_price <> old_price)` on `subscription_plan_price_history` |
+| Account type matches owner | `CHECK` on `credentials` |
+| One account per email, ignoring case | `UNIQUE INDEX uq_credentials_email_lower ON credentials (lower(email))` |
 
-### organizations
-Top-level entity. A single Viva Sports Club entity, or a franchise group.
+## Who writes what (ADR-011)
+| Tables | Written by |
+|---|---|
+| `books`, `book_files`, `subscription_plans`, `subscription_plan_price_history`, `admins` | this app (back office) |
+| `users` (profile, PIN, lockouts), `book_orders`, `purchases`, `subscription_orders`, `subscriptions` | storybook_library_app (parent app and its renewal job) |
+| `credentials`, `refresh_tokens` | both: each app logs in, refreshes and logs out only its own account type |
 
-```sql
-CREATE TABLE organizations (
-    id          UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    name        VARCHAR(200) NOT NULL,
-    slug        VARCHAR(100) NOT NULL UNIQUE,
-    is_active   BOOLEAN NOT NULL DEFAULT TRUE,
-    created_at  TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-    updated_at  TIMESTAMPTZ NOT NULL DEFAULT NOW()
-);
-```
+State transitions (`pending → paid/failed`, `active → cancelled/expired`), all made by storybook_library_app, use conditional updates (`UPDATE … WHERE status = 'pending' RETURNING id`). If two requests race, only one wins; the other gets `DUPLICATE_REQUEST`, or is skipped in the renewal job.
 
----
+## Access rule (derived, not stored)
+Applied by storybook_library_app. For a user and a book (PRD §12.1):
+1. Book missing, or unpublished/deleted **and not purchased** → `BOOK_NOT_FOUND`
+2. `price = 0` → `free`
+3. Row in `purchases` → `owned`
+4. Row in `subscriptions` with `status = 'active'` → `subscribed`
+5. Otherwise → `locked` (content returns `403 BOOK_LOCKED`)
 
-### locations
-A physical club location. New locations are added via admin config — no code change.
+"Active" deliberately ignores `expires_at`: renewal always succeeds (mock), so the hourly job turns ended periods into the next period.
 
-```sql
-CREATE TABLE locations (
-    id              UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    organization_id UUID NOT NULL REFERENCES organizations(id),
-    name            VARCHAR(200) NOT NULL,          -- "Viva Sports Club — Kemang"
-    address         TEXT NOT NULL,
-    city            VARCHAR(100) NOT NULL,
-    timezone        VARCHAR(50) NOT NULL DEFAULT 'Asia/Jakarta',
-    is_active       BOOLEAN NOT NULL DEFAULT TRUE,
-    created_at      TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-    updated_at      TIMESTAMPTZ NOT NULL DEFAULT NOW()
-);
-
-CREATE INDEX idx_locations_organization_id ON locations(organization_id);
-```
-
----
-
-### members
-Registered club members. Linked to auth (users table via member_id in JWT).
-
-```sql
-CREATE TABLE members (
-    id               UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    organization_id  UUID NOT NULL REFERENCES organizations(id),
-    full_name        VARCHAR(200) NOT NULL,
-    email            VARCHAR(255) NOT NULL UNIQUE,
-    phone            VARCHAR(30),
-    password_hash    VARCHAR(255) NOT NULL,
-    membership_tier  VARCHAR(20) NOT NULL DEFAULT 'standard'
-                     CHECK (membership_tier IN ('standard','silver','gold','platinum')),
-    credits_balance  INTEGER NOT NULL DEFAULT 0,    -- in sen
-    is_active        BOOLEAN NOT NULL DEFAULT TRUE,
-    joined_at        TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-    created_at       TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-    updated_at       TIMESTAMPTZ NOT NULL DEFAULT NOW()
-);
-
-CREATE INDEX idx_members_email            ON members(email);
-CREATE INDEX idx_members_organization_id  ON members(organization_id);
-```
-
----
-
-### refresh_tokens
-Server-side refresh token store. Enables true logout (revoke the token).
-
-```sql
-CREATE TABLE refresh_tokens (
-    id          UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    member_id   UUID NOT NULL REFERENCES members(id),
-    token_hash  VARCHAR(255) NOT NULL UNIQUE,   -- SHA-256 of the opaque token
-    expires_at  TIMESTAMPTZ NOT NULL,
-    revoked_at  TIMESTAMPTZ,
-    created_at  TIMESTAMPTZ NOT NULL DEFAULT NOW()
-);
-
-CREATE INDEX idx_refresh_tokens_member_id   ON refresh_tokens(member_id);
-CREATE INDEX idx_refresh_tokens_token_hash  ON refresh_tokens(token_hash);
-```
-
----
-
-### courts
-A bookable court at a location.
-
-```sql
-CREATE TABLE courts (
-    id           UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    location_id  UUID NOT NULL REFERENCES locations(id),
-    name         VARCHAR(100) NOT NULL,        -- "Court A", "Court B"
-    court_type   VARCHAR(20) NOT NULL
-                 CHECK (court_type IN ('padel','tennis','futsal','badminton')),
-    is_active    BOOLEAN NOT NULL DEFAULT TRUE,
-    created_at   TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-    updated_at   TIMESTAMPTZ NOT NULL DEFAULT NOW()
-);
-
-CREATE INDEX idx_courts_location_id ON courts(location_id);
-```
-
----
-
-### bookings
-A confirmed or pending court reservation. Financial record — never hard-delete.
-
-```sql
-CREATE TABLE bookings (
-    id                  UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    member_id           UUID NOT NULL REFERENCES members(id),
-    court_id            UUID NOT NULL REFERENCES courts(id),
-    location_id         UUID NOT NULL REFERENCES locations(id),
-    booking_ref         VARCHAR(30) NOT NULL UNIQUE,    -- "VIV-20250701-0042"
-    date                DATE NOT NULL,
-    start_time          TIME NOT NULL,
-    end_time            TIME NOT NULL,
-    duration_minutes    INTEGER NOT NULL,
-    status              VARCHAR(25) NOT NULL DEFAULT 'pending_payment'
-                        CHECK (status IN (
-                            'pending_payment','confirmed','cancelled','no_show','refunded'
-                        )),
-    total_amount_idr    INTEGER NOT NULL,               -- in sen, never float
-    xendit_payment_id   VARCHAR(255) UNIQUE,            -- idempotency key
-    qr_code_token       VARCHAR(255),                   -- used for check-in QR
-    notes               TEXT,
-    confirmed_at        TIMESTAMPTZ,
-    cancelled_at        TIMESTAMPTZ,
-    created_at          TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-    updated_at          TIMESTAMPTZ NOT NULL DEFAULT NOW()
-);
-
-CREATE INDEX idx_bookings_member_id         ON bookings(member_id);
-CREATE INDEX idx_bookings_court_id          ON bookings(court_id);
-CREATE INDEX idx_bookings_location_id       ON bookings(location_id);
-CREATE INDEX idx_bookings_date              ON bookings(date);
-CREATE INDEX idx_bookings_status            ON bookings(status);
-CREATE INDEX idx_bookings_xendit_payment_id ON bookings(xendit_payment_id);
-```
-
----
-
-### booking_slots
-Normalized slot records for a booking. Supports multi-slot bookings (e.g. 2-hour block = 2 × 1hr slots).
-
-```sql
-CREATE TABLE booking_slots (
-    id          UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    booking_id  UUID NOT NULL REFERENCES bookings(id) ON DELETE CASCADE,
-    slot_start  TIMESTAMPTZ NOT NULL,
-    slot_end    TIMESTAMPTZ NOT NULL
-);
-
-CREATE INDEX idx_booking_slots_booking_id ON booking_slots(booking_id);
-CREATE INDEX idx_booking_slots_dates      ON booking_slots(slot_start, slot_end);
-```
-
----
-
-### staff
-Club staff members (coaches, front office, F&B, managers).
-
-```sql
-CREATE TABLE staff (
-    id              UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    location_id     UUID NOT NULL REFERENCES locations(id),
-    full_name       VARCHAR(200) NOT NULL,
-    email           VARCHAR(255) NOT NULL UNIQUE,
-    phone           VARCHAR(30),
-    password_hash   VARCHAR(255) NOT NULL,
-    role            VARCHAR(30) NOT NULL
-                    CHECK (role IN ('admin','manager','front_office','coach','fnb','maintenance')),
-    is_active       BOOLEAN NOT NULL DEFAULT TRUE,
-    created_at      TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-    updated_at      TIMESTAMPTZ NOT NULL DEFAULT NOW()
-);
-
-CREATE INDEX idx_staff_location_id ON staff(location_id);
-CREATE INDEX idx_staff_email       ON staff(email);
-```
-
----
-
-### attendance_records
-QR-based clock-in/clock-out for staff.
-
-```sql
-CREATE TABLE attendance_records (
-    id           UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    staff_id     UUID NOT NULL REFERENCES staff(id),
-    location_id  UUID NOT NULL REFERENCES locations(id),
-    clock_in     TIMESTAMPTZ NOT NULL,
-    clock_out    TIMESTAMPTZ,
-    shift_date   DATE NOT NULL,
-    notes        TEXT,
-    created_at   TIMESTAMPTZ NOT NULL DEFAULT NOW()
-);
-
-CREATE INDEX idx_attendance_staff_id    ON attendance_records(staff_id);
-CREATE INDEX idx_attendance_shift_date  ON attendance_records(shift_date);
-```
-
----
-
-### menu_items
-F&B items available at Viva Lounge.
-
-```sql
-CREATE TABLE menu_items (
-    id           UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    location_id  UUID NOT NULL REFERENCES locations(id),
-    name         VARCHAR(200) NOT NULL,
-    description  TEXT,
-    category     VARCHAR(50) NOT NULL
-                 CHECK (category IN ('food','beverage','snack','package')),
-    price_idr    INTEGER NOT NULL,      -- in sen
-    is_available BOOLEAN NOT NULL DEFAULT TRUE,
-    created_at   TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-    updated_at   TIMESTAMPTZ NOT NULL DEFAULT NOW()
-);
-
-CREATE INDEX idx_menu_items_location_id ON menu_items(location_id);
-```
-
----
-
-### lounge_orders
-F&B orders placed at Viva Lounge.
-
-```sql
-CREATE TABLE lounge_orders (
-    id              UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    location_id     UUID NOT NULL REFERENCES locations(id),
-    member_id       UUID REFERENCES members(id),    -- nullable: walk-in customers
-    table_number    VARCHAR(20),
-    status          VARCHAR(20) NOT NULL DEFAULT 'open'
-                    CHECK (status IN ('open','paid','cancelled','voided')),
-    total_amount_idr INTEGER NOT NULL DEFAULT 0,    -- in sen
-    payment_method  VARCHAR(30),
-    notes           TEXT,
-    created_by      UUID NOT NULL REFERENCES staff(id),
-    closed_at       TIMESTAMPTZ,
-    created_at      TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-    updated_at      TIMESTAMPTZ NOT NULL DEFAULT NOW()
-);
-
-CREATE INDEX idx_lounge_orders_location_id ON lounge_orders(location_id);
-CREATE INDEX idx_lounge_orders_member_id   ON lounge_orders(member_id);
-CREATE INDEX idx_lounge_orders_status      ON lounge_orders(status);
-```
-
----
-
-### lounge_order_items
-Line items for a lounge order.
-
-```sql
-CREATE TABLE lounge_order_items (
-    id              UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    order_id        UUID NOT NULL REFERENCES lounge_orders(id) ON DELETE CASCADE,
-    menu_item_id    UUID NOT NULL REFERENCES menu_items(id),
-    quantity        INTEGER NOT NULL CHECK (quantity > 0),
-    unit_price_idr  INTEGER NOT NULL,   -- price at time of order (snapshot)
-    subtotal_idr    INTEGER NOT NULL,
-    notes           TEXT,
-    created_at      TIMESTAMPTZ NOT NULL DEFAULT NOW()
-);
-
-CREATE INDEX idx_lounge_order_items_order_id ON lounge_order_items(order_id);
-```
-
----
-
-### notification_log
-Audit trail for every notification sent (WhatsApp, email).
-
-```sql
-CREATE TABLE notification_log (
-    id           UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    member_id    UUID REFERENCES members(id),
-    channel      VARCHAR(20) NOT NULL CHECK (channel IN ('whatsapp','email','sms')),
-    template_key VARCHAR(100) NOT NULL,     -- e.g. "booking_confirmed"
-    recipient    VARCHAR(255) NOT NULL,     -- phone or email
-    status       VARCHAR(20) NOT NULL DEFAULT 'pending'
-                 CHECK (status IN ('pending','sent','failed','bounced')),
-    sent_at      TIMESTAMPTZ,
-    error_msg    TEXT,
-    created_at   TIMESTAMPTZ NOT NULL DEFAULT NOW()
-);
-
-CREATE INDEX idx_notification_log_member_id    ON notification_log(member_id);
-CREATE INDEX idx_notification_log_status       ON notification_log(status);
-CREATE INDEX idx_notification_log_created_at   ON notification_log(created_at);
-```
-
----
-
-## Template — adding a new table
-
-Copy this block. Fill every field. Do not skip indexes or constraints.
-
-```sql
-CREATE TABLE [table_name] (
-    id              UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    -- FK to owner entity:
-    [parent_id]     UUID NOT NULL REFERENCES [parent_table](id),
-    -- Required fields:
-    [field_name]    [TYPE] NOT NULL,
-    -- Optional fields:
-    [field_name]    [TYPE],
-    -- Status / type fields use VARCHAR + CHECK:
-    [status]        VARCHAR(20) NOT NULL DEFAULT '[default]'
-                    CHECK ([status] IN ('[val1]','[val2]')),
-    -- Money fields use INTEGER (sen):
-    [amount]        INTEGER NOT NULL DEFAULT 0,
-    -- Audit fields (always include):
-    created_at      TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-    updated_at      TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-    -- Soft delete (add if needed):
-    deleted_at      TIMESTAMPTZ
-);
-
--- Index every FK and every column used in WHERE / ORDER BY:
-CREATE INDEX idx_[table]_[parent_id]  ON [table_name]([parent_id]);
-CREATE INDEX idx_[table]_[field_name] ON [table_name]([field_name]);
-```
-
-**Go domain struct conventions:**
-```go
-type [Entity] struct {
-    ID         uuid.UUID   `db:"id"`
-    [ParentID] uuid.UUID   `db:"[parent_id]"`
-    [Field]    string      `db:"[field_name]"`
-    CreatedAt  time.Time   `db:"created_at"`
-    UpdatedAt  time.Time   `db:"updated_at"`
-    DeletedAt  *time.Time  `db:"deleted_at"` // pointer — nullable
-}
-```
+## Query rules
+- `epub_content` is read only by storybook_library_app's content endpoint, after the access check passes. This app writes it on upload and never selects it: every book query here uses an explicit column list without it.
+- Covers live in `book_files` so book lists never touch image bytes.

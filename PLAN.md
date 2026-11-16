@@ -1,24 +1,339 @@
-## Template
-# Plan: [Feature Name]
-**Status:** In Progress — Phase 2 of 4
-**Last updated:** [date]
+# Plan: Storybook Library — Backend Service
+**Source:** [docs/PRD_storybook-lib-app.md](docs/PRD_storybook-lib-app.md) (US-01 … US-17, edge cases E1–E22, §12 system design)
+**Branch:** `feat/STORY-1-backend-service` (no ticket ID was provided, so STORY-1 is a placeholder; rename with `git branch -m`)
+**Status:** DONE. All phases implemented. Decisions D1, D3, D4, D5, D7 confirmed by the engineer on 2026-11-16; Risk 2 approved (docs replaced).
+**Last updated:** 2026-11-16
+
+---
 
 ## Phases
-- [x] Phase 1: Database layer — DONE
-- [ ] Phase 2: API endpoints — IN PROGRESS
-- [ ] Phase 3: Auth integration — TODO
-- [ ] Phase 4: Tests + cleanup — TODO
+Each phase is two commits: `test(scope): …` (failing tests, failure output shown), then `feat(scope): …` (implementation, `make done` green).
 
-## Phase 2 detail
-- [x] POST /users
-- [ ] GET /users/:id
-- [ ] PUT /users/:id (PATCH semantics — partial update only)
+- [x] **Phase 0: Scaffold fixes** (`chore`)
+- [x] **Phase 1: Schema + seed** (`db`)
+- [x] **Phase 2: Auth**: parent and admin login, refresh, logout, JWT + role middleware (`auth`)
+- [x] **Phase 3: Profile & PIN**: `/me`, PIN set, verify, and forgot, with lockout (`account`)
+- [x] **Phase 4: Back office**: book CRUD with file upload, subscription plan config (`admin`)
+- [x] **Phase 5: Library**: showcase with access status, detail, cover, EPUB stream, My Book (`book`)
+- [x] **Phase 6: Book orders**: Buy Now, mock pay, Order History (`order`)
+- [x] **Phase 7: Subscriptions**: plan, subscribe, mock pay, cancel, history, auto-renew job (`subscription`)
+- [x] **Phase 8: Docs + done report**: real API contract and data model docs, coverage ≥ 80%
 
-## Decisions made — do not revisit
-- Using PATCH not PUT for user updates
-- Return 409 on duplicate email (not 400)
-- Storing refresh tokens in Redis (not DB) — see docs/DECISIONS.md
+---
 
-## Known risks / open questions
-- Rate limiting on auth endpoints — deferred to Phase 4
-- Need to confirm Keycloak realm config with DevOps before Phase 3
+## Phase 0: Scaffold fixes (bugs found while reading the scaffold)
+| Problem found | Fix |
+|---|---|
+| `Makefile` is a **directory**, not a file. No `make` targets exist, so `make done` cannot run. | Replace it with a real `Makefile` with `run`, `migrate`, `seed`, `test` (`-race -cover`), `test-integration`, `lint`, `build`, and `done`. |
+| The migrator's run order comes from Go **map iteration**, which is random, so migrations can apply out of order. | Use the ordered `migrations` slice. |
+| `migrations/20250806084945_create_payment_table.sql` is listed but missing, so `migrate up` fails. | Delete it, together with the loan/partner `payment` example (controller, service, repository, mocks, models, and the `BILL_NOT_FOUND`/`PARTNER_NOT_FOUND` constants). |
+| The global middleware requires an `x-partner-id` header on every route. | Remove it (it's from another domain). Keep `x-request-id` optional and generate one when missing. |
+| The Redis "request-id lock" middleware ignores errors and blocks a retry when the same request id is reused. | Remove it. Idempotency is handled by a DB unique key (see D5). |
+| `BodyDump` writes full request and response bodies to **Mongo**, which would log passwords, PINs, tokens, and EPUB bytes. This breaks the "never log sensitive fields" rule. | Remove it, along with the Mongo client and config. The echo access log stays. |
+| `main.go`: `InitRoute` blocks on `Start`, and `run()` only prints a log line. | `InitRoute` registers routes only. `run()` starts the scheduler and the server, with graceful shutdown. |
+| The response envelope is `{responseCode, responseDesc, responseData}`, but PRD §12.4 specifies `{error:{code,message}}`. | See D1. |
+| `go.mod` says `go 1.20`; the project targets Go 1.22. | Bump to 1.22. |
+
+## Phase 1: Schema (single initial migration file covering every PRD §12.2 table, UUID PKs, `INTEGER` IDR, `VARCHAR`+`CHECK` enums)
+`users`, `admins`, `credentials`, `refresh_tokens`, `books` (`epub_content BYTEA`, `deleted_at`), `book_files` (cover, `UNIQUE(book_id)`), `subscription_plans` (single row), `subscriptions`, `book_orders` (`UNIQUE(idempotency_key)`), `subscription_orders` (`UNIQUE(idempotency_key)`), `purchases` (`UNIQUE(user_id, book_id)`).
+Columns added beyond the PRD:
+- `users.pin_failed_attempts INT` and `users.pin_locked_until TIMESTAMPTZ` for E12. These live in the DB, not Redis (D3).
+- A partial unique index `subscriptions(user_id) WHERE status='active'`, so the DB itself guarantees at most one active subscription per user.
+
+Seed: `go run main.go seed` reads `SEED_PARENT_EMAIL/PASSWORD` and `SEED_ADMIN_EMAIL/PASSWORD` from env and creates one parent, one admin, and the default plan. No credentials are committed.
+
+## Phase 2–7: Endpoints (exactly PRD §12.3, under `/api/v1`)
+**Library (parent JWT):** `POST /auth/login|refresh|logout` · `GET/PATCH /me` · `PUT /me/pin` · `POST /me/pin/verify|forgot` · `GET /books`, `/books/:id`, `/books/:id/cover`, `/books/:id/content` · `GET /me/books` · `POST/GET /book-orders`, `POST /book-orders/:id/pay` · `GET /subscription/plan` · `POST /subscription-orders`, `POST /subscription-orders/:id/pay` · `POST /subscriptions/current/cancel` · `GET /subscriptions`
+
+**Back office (admin JWT):** `POST /admin/auth/login|logout` · `GET/POST /admin/books`, `GET/PUT/DELETE /admin/books/:id` · `GET/PUT /admin/subscription-plan`
+
+### Core rules (service layer)
+- **Access check** (PRD §12.1 order): book exists, is published, and is not deleted, else `404 BOOK_NOT_FOUND`; then `price == 0` → `free`; purchased → `owned`; active subscription → `subscribed`; otherwise `locked`. **Exception:** a purchased book that was later soft-deleted or unpublished stays readable through `/books/:id/content` and stays in My Book (E5).
+- **Book order create:** rejected when the book is free (E10 `BOOK_NOT_PURCHASABLE`), already owned (E1 `BOOK_ALREADY_OWNED`), or the user is subscribed (E2 `SUBSCRIPTION_ACTIVE`). Price is snapshotted onto the order.
+- **Book order pay:** re-checks the book is still available (E6 `BOOK_UNAVAILABLE`) and re-runs the E1 and E2 checks. It charges **the order's snapshot price, not the current price** (E7). It works only when status is `pending`; otherwise `409 DUPLICATE_REQUEST` (E8). On success, the `paid` order and the `purchases` row are written in **one transaction**. On failure, the order is `failed` and the response is `402 PAYMENT_FAILED`.
+- **Subscription pay success:** creates an `active` subscription with `expires_at = started_at + 1 month` and `price_paid` from the order snapshot. On failure, no subscription is created.
+- **Cancel:** status becomes `cancelled` and `cancelled_at = now`, and access stops immediately. If nothing is active: `409 SUBSCRIPTION_NOT_ACTIVE` (E14).
+- **Auto-renew job:** an in-process ticker (hourly) finds `active` subscriptions with `expires_at <= now`. In one transaction per subscription: the old row is set to `expired` (conditional `UPDATE … WHERE status='active'`, so two runs cannot both renew it), and a new `active` row is created with `renewed_from_id` and the **current** plan price, plus a `renewal` subscription order that is already `paid`.
+- **PIN:** must be 4 digits and is stored as a bcrypt hash. Changing an existing PIN requires the account password. Errors: verify before any PIN is set → `409 PIN_NOT_SET` (E11); wrong PIN → `401 INVALID_PIN`; the 5th wrong attempt locks verification for 1 minute → `429 TOO_MANY_ATTEMPTS` (E12). Forgot PIN with a wrong password → `401 INVALID_PASSWORD` (E13).
+- **Admin book validation:** cover must be `.jpg/.jpeg/.png` and the book file `.epub`, checked by extension **and** magic bytes, else `400 INVALID_FILE_FORMAT` (E15). Age range: `range` requires whole numbers with `0 ≤ min < max`; `plus` requires `min` only; violations → `400 INVALID_AGE_RANGE` (E16). Price must be a whole number ≥ 0. A computed `age_label` (`"1–3"` / `"3+"`) is returned.
+- **List queries never select `epub_content`** (PRD §15 risk).
+
+### Layout (follows the scaffold's handler → service → repository split)
+```
+handler/controllers/{auth,account,book,adminbook,order,subscription}/
+internal/services/{auth,account,book,order,subscription}/      # + scheduler in subscription
+internal/repositories/{credential,user,book,order,subscription}/
+internal/helper/{response.go,jwt.go,auth_middleware.go}          # modified / added
+models/*.go, models/dto/*.go
+migrations/*.sql
+```
+One file per domain layer (`controller.go`, `service.go`, `repository.go` plus `_test.go`), **not** the scaffold's one-file-per-method. That alone avoids about 60 near-empty files.
+
+**Files NOT touched:** `pkg/logger`, `pkg/monitor`, `pkg/orm` (used as is), `.claude/rules/*`, and `engineering-with-claude-playbook.md`.
+
+---
+
+## Decisions (please confirm or annotate)
+| # | Decision | Default I'll use | Why |
+|---|---|---|---|
+| D1 | Response envelope | Success: `{"data": …}` (lists add `meta.total`). Error: `{"error":{"code","message"}}` with the PRD codes. I'll rewrite `helper/response.go` and the code→HTTP map, keeping the `Response` interface. | The PRD is the contract for the Lovable frontend. The scaffold envelope is from a different service. |
+| D2 | JWT signing | **HS256** with `JWT_SECRET` from env; `golang-jwt/jwt/v5`. Access token 30 min, refresh token 7 days, opaque, SHA-256 hash stored in `refresh_tokens`. | A single service issues and verifies tokens. RS256 only pays off when other services verify them. |
+| D3 | Infra dependencies | **PostgreSQL only.** Drop Redis and Mongo. | Nothing in the PRD needs them. PIN lockout fits in two columns, and idempotency is a unique index. One fewer system to run (matches PRD §11). |
+| D4 | Mock payment input | `POST …/pay` body `{"result": "success" \| "failed"}` | The PRD says the mock has exactly two outcomes, and the client chooses which one. |
+| D5 | Idempotency (E8) | The client sends `idempotency_key` when creating an order. A repeated key → `409 DUPLICATE_REQUEST`. Paying a non-`pending` order → `409 DUPLICATE_REQUEST`. **Retry after a failed payment creates a new order** with a new key, so Order History shows both the Failed and the Paid attempt. | US-12 lists Paid and Failed rows, which implies one row per attempt. |
+| D6 | "Subscribed" definition | `status='active'`, without comparing against `expires_at` | Renewal always succeeds (mock), so checking the date would only lock users out in the gap before the job runs. |
+| D7 | View mode and "Settings only from Parent view" | **Client-side only.** The API does not know the current view mode; it enforces the PIN check and lockout. | Parent and child share one account and one token (PRD assumption), so the server cannot tell who is holding the device. |
+| D8 | Pagination | None on `/books` (PRD: "all books in one showcase"). The admin list also returns everything for the MVP. Logged in `tech-debt.md`. | The catalogue is small for the MVP. |
+| D9 | Upload limits | Cover ≤ 5 MB, EPUB ≤ 50 MB; enforced with echo `BodyLimit` on admin routes. `PUT /admin/books/:id` keeps the existing files when none are sent. | Files are stored in Postgres, so the request size needs a cap. |
+| D10 | Tests | **Service:** testify mocks of repository interfaces, covering every AC and E1–E22. **Handler:** `httptest` + mocked service, asserting the status and error code for each mapping, plus 401/403 middleware tests. **Repository:** `//go:build integration` against Postgres in Docker (`make test-integration`), not run before commits. Hand-written mocks in `test/mock/`, as in the scaffold (`mockery` isn't installed). | Follows `.claude/rules/testing.md`. |
+
+## Risks / open questions
+1. **Docker isn't running** on this machine. Repository integration tests and manual smoke tests need it (`docker run postgres:16`). Unit tests don't.
+2. **`docs/ARCHITECTURE.md`, `API-contracts.md`, `DATA-MODELS.md`, and `DECISIONS.md` describe "Viva Sports Club"** (a template). CLAUDE.md loads them as context, which is misleading. Phase 8 replaces API-contracts and DATA-MODELS with the storybook versions and trims ARCHITECTURE. OK to overwrite?
+3. **`.claude/rules/api-patterns.md` conflicts with `security.md`** (cursor vs offset pagination, different error shape). I'm following the PRD and `security.md`. The rules files aren't touched; flagging only.
+4. A child holding the parent's token can call parent endpoints directly (D7). This is accepted per the PRD; real protection needs child profiles (out of scope).
+5. Single-instance scheduler: the conditional update prevents double renewal, but with several instances every one of them would scan. Logged as tech debt.
+
+## Deviations from this plan (made during implementation)
+- Added `migrations/migration_test.go` (`TestOrdered_MatchesSortedSQLFiles`), a unit test in `make done` that enforces S4. It and `TestSchema_InsertsWithoutTimestamps_UseDefaults` passed before the migration: they guard the contract rather than drive the change.
+- The library also deleted `pkg/migrator`; nothing else used it.
+- The library integration test's fixture passwords are new test-only values, not the old demo passwords.
+- Tech debt: management TD-12, TD-13; library TD-009, TD-010, plus TD-011 (demo passwords in git history).
+
+## Tech-debt entries this plan will add
+EPUB/cover stored in the DB · no pagination · HS256 shared secret · in-process scheduler · no rate limit on `/auth/login` (only the PIN has a lockout) · mocked auth and payment
+
+## Deviations from this plan (made during implementation)
+- Phase 1: one initial migration file instead of one per table. It is the first schema and is applied as a unit.
+- Phase 0/1: `pkg/orm` gained `WithTx`, `NewPostgresDSN`, `ErrDuplicate`/`ErrStateChanged` and `IsUniqueViolation` (planned as untouched).
+- Dev/test Postgres runs on **:5433**, because a local Postgres already owned :5432.
+- `/auth/refresh` serves both apps; the admin app has no separate refresh endpoint.
+- `GET /books/:id/cover` accepts parent **and** admin tokens, so the admin app can show covers.
+- Additional removals: unused resty HTTP client and the `Restful` mock (they failed `go vet`).
+
+---
+
+# Plan: CR-001 — Account badge & subscription price change
+**Source:** [docs/CR-001_Badge_and_Subscription_Pricing.md](docs/CR-001_Badge_and_Subscription_Pricing.md)
+**Branch:** `feat/STORY-2-cr001-badge-plan-pricing` (no ticket; STORY-2 is a placeholder), cut from `feat/STORY-1-backend-service`
+**Status:** DONE. Approved 2026-11-16 (C1, C4, C7 confirmed; other conflicts resolved as recommended)
+
+## Already in place (no change)
+`subscription_plans`, `subscriptions.plan_id/price_paid`; checkout snapshots the current plan price; renewal charges the latest price (P1–P7, T4–T6, T9, B4, B5).
+
+## Decisions
+| # | Decision |
+|---|---|
+| C1 | Keep the mocked hourly auto-renew (PRD US-10). No manual `/payments/subscription/renew`, so no `NO_ACTIVE_SUBSCRIPTION` (T10 dropped). |
+| C2 | Keep existing paths (`/subscription/plan`, `/subscription-orders`, `/:id/pay`). |
+| C3 | Renewal keeps creating a new period row (PRD US-13); no `renewed_at`. |
+| C4 | `plan_status` = `subscribed` when a `status = 'active'` period exists, same rule as the access check (ADR-006). |
+| C5 | Keep calendar-month duration; no `duration_days`. |
+| C6 | `updated_by` / `changed_by` reference `admins.id`. |
+| C7 | `expected_price` required on `POST /subscription-orders` (409 `PRICE_CHANGED` on mismatch). Pay returns 409 `PRICE_CHANGED` when the order price ≠ current plan price; the order stays pending, client creates a new one. |
+| C8 | Price ≤ 0 → 400 `INVALID_PRICE` (checked in the service). |
+| C9 | `/me` adds `plan_status`; `is_subscriber` kept (deprecated). |
+| C10 | Same price → no history row (E-CR6); same price and benefits → no write at all. First-ever plan creation writes no history row. |
+
+## Phases
+- [x] **Phase A (db):** migration `20261117000001_cr001_plan_price_history.sql`; `SavePlan` writes a history row in the same transaction when the price changes; `ListPriceHistory`.
+- [x] **Phase B (subscription):** `INVALID_PRICE`, `PRICE_CHANGED`; `UpdatePlan(adminID, …)`; `GetAdminPlan` with price history; `expected_price` check on create; plan-price check on pay.
+- [x] **Phase C (account):** `/me` → `plan_status`, `subscription.next_renewal_price`, `subscription.price_change_pending`.
+- [x] **Phase D (docs):** API-contracts, DATA-MODELS, DECISIONS (ADR-009).
+
+## Not touched
+Auth, book orders/payment (P7), adminbook, book, renewal scheduler, the existing migration file, seed.
+
+## Risks
+- Price check on pay and `Activate` are not one transaction: an admin change in that millisecond window is charged at the order price. Acceptable for a mock payment.
+- `expected_price` is a breaking change for existing `POST /subscription-orders` clients.
+
+---
+
+# Plan: Shared schema — management app owns it, library app's changes merged in
+**Classification:** INTERNAL
+**Source:** engineer request 2026-11-16: both backends must use one database, this repo owns the schema, and the library app's schema changes are merged in.
+**Branch:** `feat/STORY-3-shared-schema` (no ticket; STORY-3 is a placeholder), cut from `feat/STORY-2-cr001-badge-plan-pricing`. The library repo gets the same branch name.
+**Status:** DONE (Phases 1–4); Phase 5 is a manual local step. S1–S7 approved as recommended on 2026-11-16. Risk 3 answered on 2026-11-16 (see below); the follow-up is TD-12.
+
+## What is different today (verified by reading both repos)
+| Area | management_app (owner) | storybook_library_app | Action |
+|---|---|---|---|
+| Migration ids | `…000001_create_storybook_schema`, `20261117000001_cr001_plan_price_history` | `…000001_create_storybook_tables`, `…02_seed…`, `…03_add_forgot_pin_attempt_limit`, `…04_cr001_plan_pricing` | Ids never match, so a shared `migrations` table breaks. The library stops migrating (S1). |
+| `users.password_failed_attempts`, `password_locked_until` | missing | added by `…03`, used by library Forgot PIN lockout (4 tries, 60 s) | **Merge** |
+| Email uniqueness | `UNIQUE (email)`, case-sensitive; seed stores lowercase | unique index on `lower(email)`; login queries `lower(email) = lower(?)` | **Merge**: add `lower(email)` unique index (S2) |
+| FK indexes | none on these | `subscription_orders(plan_id)`, `subscription_plans(updated_by)`, `subscription_plan_price_history(changed_by)` | **Merge** |
+| `created_at`/`updated_at` on `subscriptions`, `book_orders`, `subscription_orders`, `subscription_plans.created_at` | present, written by management code | missing; library inserts leave them out | Keep. `DEFAULT NOW()` fills them on library inserts. |
+| Text lengths (`users/admins.name` 200, plan `code` 50/`name` 200, hashes `VARCHAR(255)`) | wider | narrower or `TEXT` | Keep management's. It accepts everything the library writes. |
+| `epub_size_bytes`/`size_bytes` | `INTEGER` | `BIGINT` | Keep `INTEGER`. The 50 MB cap fits easily. |
+| Status defaults (`books` `'draft'`, orders `'pending'`) | present | none; library always sends `status` explicitly | Keep |
+| Index names | `idx_*` / `uq_*` | `*_idx` / `*_key` | Keep management's; renaming has no effect. |
+| Seed | `go run main.go seed`, values from `SEED_*` env vars | SQL migration with hardcoded demo accounts and bcrypt hashes | **Do not merge** (S3) |
+
+Compatibility checks (already verified):
+- Renewal job: both apps use the idempotency key `renewal:<old subscription id>` and a conditional `WHERE status = 'active'` update. If both jobs run on one DB, only one renewal per period commits.
+- PIN lockout: both apps use 5 attempts and a 60 s lock on `pin_failed_attempts` / `pin_locked_until`.
+- Every library `INSERT` either names its columns or relies on defaults that exist in management's schema. No column the library reads is missing apart from the two password-lockout columns.
+
+## Decisions (please confirm or annotate)
+| # | Decision | Recommendation |
+|---|---|---|
+| S1 | How the library app gets the schema | Library deletes its `migrations/` package and `migrate` command. Its integration test applies `$SCHEMA_DIR/*.sql` sorted by filename (default `../storybook_management_app/migrations`). Rejected: git submodule (heavy for two local repos); copying files (drifts again). Both modules are named `codebase`, so a Go import is not possible. |
+| S2 | Email uniqueness | Add `UNIQUE INDEX uq_credentials_email_lower ON credentials (lower(email))` and keep the existing `UNIQUE (email)`. No Go change: management already lowercases before lookup. |
+| S3 | Library seed migration | Not merged. Dev accounts come from management `make seed`. The library integration test creates its own fixtures (parent, second parent, admin), with bcrypt hashes generated at test time from test-only passwords. No hashes in source. |
+| S4 | Migration filename sort order = apply order | Make this a rule in DATA-MODELS.md (already true). S1 depends on it. |
+| S5 | Management app and the password lockout | Schema only. Management's Forgot PIN keeps working without the lockout. See Risk 3. |
+| S6 | Shared local DB | Management's Postgres on port 5433, database `storybook`. Library `.env.example` changes `DB_PORT` to 5433. The old library DB on 5432 is dropped. ASSUMPTION: it holds only local dev data. |
+| S7 | Renewal job running in both apps | Keep both; it's safe (see compatibility checks). Logged as tech debt. |
+
+## Phases
+Each phase is two commits: `test(…)` (failing output shown), then `feat(…)`/`chore(…)` (`make done` green). Integration runs use `make test-integration` (needs `make db-up`).
+
+- [x] **Phase 1, library (test):** switch `handler/integration_test.go` to load the schema from `SCHEMA_DIR` and create its fixtures in the test (S1, S3). Run it against management's current migrations.
+  **Expected red:** `column u.password_locked_until does not exist`, and a case-insensitive duplicate email accepted.
+- [x] **Phase 2, management (db):** new file `migrations/20261117000002_merge_library_schema.sql`, appended to `migrations` in [migrations/migration.go](migrations/migration.go):
+  ```sql
+  ALTER TABLE users
+      ADD COLUMN password_failed_attempts INTEGER NOT NULL DEFAULT 0,
+      ADD COLUMN password_locked_until    TIMESTAMPTZ;
+  CREATE UNIQUE INDEX uq_credentials_email_lower ON credentials (lower(email));
+  CREATE INDEX idx_subscription_orders_plan_id ON subscription_orders(plan_id);
+  CREATE INDEX idx_subscription_plans_updated_by ON subscription_plans(updated_by);
+  CREATE INDEX idx_plan_price_history_changed_by ON subscription_plan_price_history(changed_by);
+  ```
+  Failing tests first, in [internal/repositories/testdb/schema_integration_test.go](internal/repositories/testdb/schema_integration_test.go):
+  - `TestSchema_NewUser_PasswordLockoutDefaultsToZero`
+  - `TestSchema_EmailDiffersOnlyByCase_Rejected`
+  - `TestSchema_InsertsWithoutTimestamps_UseDefaults` (library-style inserts into `books`, `book_files`, `book_orders`, `subscriptions`, `subscription_orders`, `refresh_tokens`)
+
+  Then the library suite from Phase 1 should go green.
+- [x] **Phase 3, library (chore):** delete `migrations/` (including the seed SQL), the `migrate` case in `main.go`, and the Makefile target. `.env.example`: `DB_PORT=5433`. README setup: `make -C ../storybook_management_app db-up migrate seed`. `make test-integration` sets `SCHEMA_DIR`.
+- [x] **Phase 4, both (docs):**
+  - Management: DATA-MODELS (new columns, email index, ownership rule, S4), ARCHITECTURE (two backends, one DB), ADR-010 "management_app owns the shared schema", `tech-debt.md`.
+  - Library: DATA-MODELS and ARCHITECTURE point to management's schema, plus `tech-debt.md`.
+- [ ] **Phase 5, local cutover (manual, no commit):**
+  1. Check for case-duplicate emails: `SELECT lower(email) FROM credentials GROUP BY 1 HAVING count(*) > 1;`. This must return no rows.
+  2. Run management `make migrate`.
+  3. Switch library `.env` to 5433 and start it.
+  4. Smoke test: log in to both apps, and check that a book bought in the library app shows up through the management app.
+
+## Not touched
+- Management: the two existing migration files (never edit an applied migration), `seed.go`, auth, payment and webhook logic, services, handlers, `models/storybook.go` (GORM ignores the extra `users` columns).
+- Library: services, repositories, handlers. They already fit the merged schema.
+
+## Risks / open questions
+1. **Case-duplicate emails** make the `lower(email)` index fail, and the whole migration with it. Phase 5 step 1 checks for this first.
+2. **Library writes leave `updated_at` stale** on `subscriptions`, `book_orders` and `subscription_orders`. Nothing reads them today, so this goes in tech debt and is not fixed.
+3. **Answered 2026-11-16: which backend does each frontend call?** `fe_storybook_management_app` → this backend; `fe_storybook_library_app` → storybook_library_app. Both frontends' API calls confirm this. The parent frontend never calls this backend's `/me/pin/forgot`. However, this backend's parent endpoints (and the library backend's admin endpoints) are still reachable over the network with a token from the same backend, so the lockout can still be bypassed by calling them directly. Follow-up: remove the unused role surface from each backend (TD-12).
+4. **Seed credentials stay in git history.** Deleting the library seed migration removes them from HEAD but not from history, and the branch is already pushed to origin. Change those demo passwords anywhere they are used beyond localhost. A history rewrite is not planned.
+5. **Coupling through a sibling path.** The library's integration test needs management checked out next to it. Acceptable for two local repos; `SCHEMA_DIR` overrides the path.
+
+## Tech-debt entries this plan will add
+- **Medium:** two backends implement the same rules against one DB, so the rules will drift (Risk 3).
+- **Medium:** both apps run the renewal job (S7).
+- **Low:** library writes don't maintain `updated_at` (Risk 2).
+- **Low:** schema shared by sibling path (Risk 5).
+
+---
+
+# Plan: Split role surface — each backend serves only its own frontend
+**Classification:** CONFIDENTIAL (describes access-control gaps that are still open)
+**Source:** engineer, 2026-11-16: `fe_storybook_management_app` calls this backend and `fe_storybook_library_app` calls storybook_library_app. Follow-up to STORY-3, TD-12 and TD-13.
+**Branch:** `feat/STORY-4-split-role-surface` in both repos (no ticket; STORY-4 is a placeholder), cut from `feat/STORY-3-shared-schema`.
+**Status:** DONE (Phases 1–5). R1–R8 approved as recommended on 2026-11-16. Phase 6 is a manual step. Risk 1 (unknown clients) was not answered; we proceeded on the assumption that there are none.
+**Tag:** `SECURITY: manual review required`. This changes auth routes and token refresh, and removes payment code from this repo.
+
+## Why (verified by reading both repos and both frontends)
+| # | Finding | Risk area |
+|---|---|---|
+| F1 | This backend still serves parent login and every parent endpoint. It has no parent-mode token and no Forgot PIN lockout. A parent can log in here and call `/me/pin/forgot`, `/book-orders/:id/pay` or `/subscription-orders/:id/pay` directly, bypassing the library backend's controls. | Access control |
+| F2 | The library backend still serves admin login, book CRUD and plan pricing. That duplicates admin rules that this repo owns, and the two copies already differ (e.g. its `/admin/subscription-plan/history`). | Access control, consistency |
+| F3 | **New since STORY-3:** both backends hash refresh tokens the same way (SHA-256 hex) in the shared `refresh_tokens` table, and neither `/auth/refresh` checks the account type. A refresh token issued by either backend is redeemable on the other. | Session management |
+| F4 | Both backends run the hourly renewal job on the shared DB (TD-13). | Reliability |
+| F5 | Access tokens are **not** cross-accepted. The claims differ (this repo reads `account_type`, the library reads `role`), so a token from one backend fails the role check on the other, even with the same `JWT_SECRET`. | Session management (OK today, by accident) |
+| F6 | `fe_storybook_management_app` calls only `/admin/*`, `/auth/refresh` and `/books/:id/cover`. `fe_storybook_library_app` calls only parent endpoints. Nothing in either frontend breaks. ASSUMPTION: there are no other clients (scripts, mobile). | — |
+
+## Decisions (please confirm or annotate)
+| # | Decision | Recommendation |
+|---|---|---|
+| R1 | Unregister the routes only, or also delete the dead code | **Delete.** Unregistered handlers, services, mocks and tests would still need maintenance and would mislead readers. Done in two steps: a security commit (routes and refresh), then a `refactor` commit that deletes the dead code. |
+| R2 | Status for a refresh token of the wrong account type | **401 `UNAUTHORIZED`**, treated like an unknown token, so the frontend goes back to login (E19). The internal log records the reason. Alternative: 403 `FORBIDDEN`, which matches login (E17) but tells the caller the token exists. |
+| R3 | Where the admin cover endpoint lives here | Keep the path `GET /books/:id/cover` (the management frontend calls it), admin only. Move the handler into `adminbook` and delete the `book` controller and service. |
+| R4 | Renewal job | Runs only in storybook_library_app. This repo deletes `scheduler.go`, `RenewDue`, `RENEWAL_INTERVAL` and the goroutine in `main.go`. Closes TD-13. |
+| R5 | Library integration test without admin endpoints | Create books, covers and plan-price changes with SQL fixtures (as STORY-3 did for accounts). Unpublish and delete via `UPDATE books`. Upload and validation checks drop out of the library suite; this repo's `adminbook` tests already cover them. |
+| R6 | `JWT_SECRET` | Use a different secret per backend and say so in both `.env.example` files. No code change (F5). |
+| R7 | Seed | This repo's `make seed` keeps creating the parent account, because the shared DB needs one for the library app. |
+| R8 | API docs | This repo's API-contracts keeps only the Book Management section and links to the library repo's contract for parent endpoints. The library repo drops its admin section. |
+
+## Phases
+Each phase is two commits: `test(…)` (failing output shown), then `feat(…)`/`refactor(…)` (`make done` green). Changed auth code carries `// SECURITY: manual review required`.
+
+- [x] **Phase 1, this repo: close F1 and F3 (security)**
+  - **Tests first:**
+    - [handler/route_test.go](handler/route_test.go): `TestRoute_ParentEndpoints_Return404` (table: `/auth/login`, `/auth/logout`, `/me*`, `/books`, `/books/:id`, `/books/:id/content`, `/book-orders*`, `/subscription/plan`, `/subscription-orders*`, `/subscriptions*`) and `TestRoute_CoverWithParentToken_Returns403`.
+    - [internal/services/auth/service_test.go](internal/services/auth/service_test.go): `TestRefresh_ParentRefreshToken_ReturnsUnauthorized`.
+  - **Change:**
+    - [handler/route.go](handler/route.go): remove the parent block; cover becomes `adminOnly`.
+    - `auth.Refresh`: reject credentials that are not `admin` (R2).
+    - Update the sweep in `route_test.go` to the new route list.
+- [x] **Phase 2, this repo: delete dead code (R1, R3, R4)**
+  - `refactor(api)`, no behaviour change; Phase 1 tests stay green.
+  - **Delete:**
+    - controllers `account`, `order`, `book` (Cover moves into `adminbook`);
+    - services `account`, `order`, `book`;
+    - repository `order`;
+    - subscription `lifecycle.go`, `scheduler.go` and the parent controller methods (`GetPlan`, `CreateOrder`, `PayOrder`, `Cancel`, `History`);
+    - repository methods, models, DTOs, mocks and error codes that become unreferenced;
+    - the renewal goroutine and `RENEWAL_INTERVAL`.
+  - **Keep:** auth `Login(…, accountType)` (used by admin login), the account repository's credential and refresh-token methods, `seed.go`.
+  - Coverage must stay ≥ 80% on the remaining packages.
+- [x] **Phase 3, library repo: close F2 and F3 (security)**
+  - **Tests first, in `handler/integration_test.go`:**
+    - Admin routes (`/admin/auth/*`, `/admin/books*`, `/admin/subscription-plan*`) return 404.
+    - An admin refresh token (SQL fixture) gets 401 on `/auth/refresh`.
+    - Book, cover and price-change setup is rewritten as SQL fixtures (R5).
+  - **Change:** remove the admin routes; `auth.Refresh` rejects credentials that are not `parent` (R2).
+- [x] **Phase 4, library repo: delete dead code**
+  - `refactor(api)`.
+  - **Delete:**
+    - book `admin.go` (service) and the `Admin*` controller methods;
+    - subscription `UpdatePlan`/`PriceHistory` (service and controller);
+    - `AdminLogin`;
+    - the repository writes only they used (book create, update and delete; plan update; price-history insert);
+    - admin-only error codes (`INVALID_FILE_FORMAT`, `INVALID_AGE_RANGE`, `INVALID_PRICE`, `PAYLOAD_TOO_LARGE`) if nothing else returns them;
+    - the upload body limit.
+- [x] **Phase 5, both repos (docs)**
+  - API-contracts (R8), ARCHITECTURE, DATA-MODELS (who writes what), ADR-011 "one backend per frontend", `.env.example` `JWT_SECRET` note (R6).
+  - Tech debt: close TD-12 and TD-13 here and library TD-010's note if it still applies.
+  - Library PLAN.md gets a one-line pointer to this plan.
+- [ ] **Phase 6, manual smoke test (no commit)**
+  1. Run both apps on the shared DB.
+  2. Admin logs in on the management frontend, creates a book and changes the plan price.
+  3. The parent sees the book on the library frontend and gets `PRICE_CHANGED` on the old price.
+  4. Exactly one renewal is created per due period.
+
+## Files NOT touched
+- Migrations, the schema and `seed.go`.
+- `adminbook` business rules and plan-pricing rules in this repo.
+- Parent business rules in the library repo (account, order, subscription, renewal job).
+- Both frontends.
+
+## Risks / open questions
+1. **Breaking change for unknown clients** of the removed endpoints. Both frontends are confirmed clean; anything else (scripts, Postman collections, mobile) is an ASSUMPTION. Please confirm there are none.
+2. **Cross-app behaviour is no longer covered by any automated test.** "Admin changes the price → parent gets `PRICE_CHANGED`" becomes SQL-simulated in the library suite. Phase 6 covers it by hand. A shared end-to-end test is out of scope.
+3. **Tokens already issued:**
+   - A parent refresh token issued by this backend before the change keeps working on the library backend, and an admin one issued by the library keeps working here. Both were proven by password for that same account, so this is accepted.
+   - Nothing issued before the change works on the backend whose role it no longer serves.
+4. **Large deletion:** an estimated 3,000+ lines in this repo alone, from `wc -l` on the packages listed in Phase 2. Mitigated by keeping it in separate refactor commits with no behaviour change after the security commits.
+5. **This repo's `GET /books/:id/cover` keeps a non-`/admin` path** for frontend compatibility. Moving it to `/admin/books/:id/cover` would need a frontend change; not planned.
+
+## Deviations from this plan (made during implementation)
+- **Admin access token in the library test.** No admin login route exists there any more, so the library suite gets an admin access token from `auth.Service.Login(..., admin)` directly to prove parent routes reject it. The admin refresh token is inserted with SQL, as this app would issue it.
+- **`AgeLabel` kept in the library.** It lived in the deleted `admin.go` but parent book cards use it, so it moved into the book service. The free-book fixture now covers the `3+` label.
+- **More removed here than listed.** This app also dropped 14 error codes, 5 GORM models and the parent DTOs. The library app dropped `INVALID_FILE_FORMAT`, `INVALID_AGE_RANGE` and `INVALID_PRICE`.
+- **Failing-test commits.** The `test(auth)` commits leave `make done` red, as earlier stories' test commits did. The following `feat` commit makes it green.
+- **Library coverage is below 80%.** Library unit coverage was already below 80% before this story; the library relies on its end-to-end suite. `services/book` fell from 36% to 14% because the admin validation test left with the admin code.
+
+## Tech-debt entries this plan will add or close
+- **Close:** TD-12, TD-13.
+- **Add, Low:** no automated cross-app end-to-end test (Risk 2).

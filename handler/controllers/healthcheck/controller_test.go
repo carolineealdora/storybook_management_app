@@ -3,7 +3,6 @@ package healthcheck
 import (
 	"testing"
 
-	"codebase/internal/services/healthcheck"
 	"codebase/models"
 	helper_mocks "codebase/test/mock/helper"
 	services_mocks "codebase/test/mock/service"
@@ -37,8 +36,8 @@ func TestNewController(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			got := NewController(tt.args.holder)
-			if _, ok := got.HealthcheckService.(healthcheck.ViewService); !ok {
-				t.Errorf("HealthcheckService has wrong type, want *ViewHealthCheckService")
+			if got.HealthcheckService == nil {
+				t.Errorf("HealthcheckService is nil")
 			}
 		})
 

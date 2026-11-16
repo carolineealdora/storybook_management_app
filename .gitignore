@@ -41,3 +41,6 @@ tmp/*
 .claude/todos/
 .claude/cache
 *.jsonl
+
+# Build output
+bin/

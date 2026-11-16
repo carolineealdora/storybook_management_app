@@ -13,12 +13,12 @@ git checkout -b feat/PROJ-42-short-description
 
 ## Commit message format
 
-Conventional Commits — required (enforced by pre-commit hook):
+Conventional Commits — required:
 ```
 type(scope): description [TICKET-ID]
 ```
 
-Types: `feat` `fix` `docs` `test` `refactor` `chore` `ci` `perf`
+Types: `feat` `fix` `docs` `test` `refactor` `chore` `perf`
 
 Examples:
 ```
@@ -51,7 +51,7 @@ Define scopes relevant to your project's domain boundaries. Example:
 Run `make done` and show output. Do not commit if it fails.
 
 ```bash
-make done   # lint + test + build + secret scan
+make done   # lint (go vet) + test + build + secrets (detect-secrets, skipped if not installed)
 ```
 
 ## PR rules
