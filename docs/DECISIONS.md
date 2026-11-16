@@ -75,3 +75,9 @@ ADR format: what was decided, why, and what would change it. Never delete an ADR
 - `expected_price` is required on order creation. Pay compares the order's snapshot price with the current plan price. Either mismatch returns `409 PRICE_CHANGED`.
 **Why:** most of CR-001-2 (price locked per period, latest price at renewal) already held. Renaming endpoints or changing the renewal model would break the PRD contract for no behaviour gain. A date-based badge would disagree with book access during the gap before the renewal job runs.
 **Revisit when:** renewals become user-triggered or can fail (then `expires_at` must count, and `past_due` appears), or a second plan is sold.
+
+<a name="adr-010"></a>
+## ADR-010 — This repo owns the schema shared with storybook_library_app
+**Decision:** Both backends use one PostgreSQL database. Every migration lives in this repo's `migrations/`. The library app deleted its migrations and migrator; its integration test applies this repo's `migrations/*.sql` in filename order (`SCHEMA_DIR`, default `../storybook_management_app/migrations`). The library app's schema additions were merged in `20261117000002_merge_library_schema.sql`: the Forgot-PIN lockout columns, a unique `lower(email)` index, and three foreign-key indexes. Where the two schemas differed otherwise, this repo's definitions were kept (extra `created_at`/`updated_at`, wider text, status defaults), since the library app's writes already fit them. Seed accounts come only from `make seed` (`SEED_*` env vars).
+**Why:** two migration sets with different ids cannot share one `migrations` table. A second `migrate up` fails on `CREATE TABLE users`, and copying files between repos drifts again. Both Go modules are named `codebase`, so a shared Go package is not an option without renaming one.
+**Revisit when:** a third service needs the schema, or CI comes back (then use a shared schema module or submodule instead of the sibling path).

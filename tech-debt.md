@@ -35,6 +35,16 @@ Last updated: 2026-11-16
   - Impact: A stolen refresh token works for up to 7 days unless the user logs out.
   - Source: feat/STORY-1 Phase 2 (ADR-003)
   - Created: 2026-11-16
+- [ ] **TD-12: Two backends implement the same rules against one database**
+  - Impact: storybook_library_app and this app both serve parent and admin endpoints with different contracts. For example, the library app has a parent-mode token, pagination and a Forgot PIN lockout; this app has none of these. Rules will drift. If a frontend can reach this app's `/me/pin/forgot`, the library app's password lockout is bypassable.
+  - Source: feat/STORY-3-shared-schema (ADR-010)
+  - Created: 2026-11-16
+  - Notes: Decide which backend serves which frontend and remove the duplicate endpoints, or port the lockout here.
+- [ ] **TD-13: Both backends run the hourly renewal job on the shared database**
+  - Impact: Duplicate scans; one of the two renewals per period always loses. That is safe thanks to the conditional update and the `renewal:<id>` key, but the loser may log an error (unverified).
+  - Source: feat/STORY-3-shared-schema (ADR-010)
+  - Created: 2026-11-16
+  - Notes: Run the job in one app only once TD-12 is settled.
 
 ## Priority: Low (nice to have)
 - [ ] **TD-7: No pagination on list endpoints**

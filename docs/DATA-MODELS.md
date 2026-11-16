@@ -1,6 +1,7 @@
 # Data Models — Storybook Library
 **Last updated:** 2026-11-16
-**Schema:** [migrations/20261116000001_create_storybook_schema.sql](../migrations/20261116000001_create_storybook_schema.sql) and [20261117000001_cr001_plan_price_history.sql](../migrations/20261117000001_cr001_plan_price_history.sql) are the source of truth; this page explains them.
+**Schema:** [migrations/20261116000001_create_storybook_schema.sql](../migrations/20261116000001_create_storybook_schema.sql) [20261117000001_cr001_plan_price_history.sql](../migrations/20261117000001_cr001_plan_price_history.sql) and [20261117000002_merge_library_schema.sql](../migrations/20261117000002_merge_library_schema.sql) are the source of truth; this page explains them.
+**Shared:** storybook_library_app uses this same database and schema and has no migrations of its own ([ADR-010](DECISIONS.md#adr-010)).
 **Go structs:** [models/storybook.go](../models/storybook.go)
 
 ## Conventions
@@ -12,7 +13,8 @@
 | Enums | `VARCHAR` + `CHECK` (no native PG enums) |
 | Soft delete | `books.deleted_at` only. Orders, purchases, and subscriptions are never deleted |
 | Business rules in the DB | Anything that must hold under concurrency is a constraint (see "Invariants") |
-| New tables/columns | Append a new numbered `.sql` file and add it to `migrations` in [migrations/migration.go](../migrations/migration.go). Never edit an applied file |
+| New tables/columns | Append a new numbered `.sql` file and add it to `migrations` in [migrations/migration.go](../migrations/migration.go). Never edit an applied file. This includes schema the library app needs |
+| Migration order | Filename order **is** apply order: the library app's tests apply `migrations/*.sql` sorted by name. `TestOrdered_MatchesSortedSQLFiles` enforces it |
 
 ## Entities
 ```
@@ -31,8 +33,8 @@ subscription_plans ──> admins (updated_by)
 
 | Table | Purpose | Notable columns |
 |---|---|---|
-| `credentials` | Login for parents and admins | `email` (unique, stored lowercase), `password_hash` (bcrypt), `account_type` `parent`/`admin`; exactly one of `user_id`/`admin_id` (CHECK) |
-| `users` | Parent profile | `name`, `pin_hash` (bcrypt, nullable), `pin_failed_attempts`, `pin_locked_until` |
+| `credentials` | Login for parents and admins | `email` (unique, also unique on `lower(email)`, stored lowercase), `password_hash` (bcrypt), `account_type` `parent`/`admin`; exactly one of `user_id`/`admin_id` (CHECK) |
+| `users` | Parent profile | `name`, `pin_hash` (bcrypt, nullable), `pin_failed_attempts`, `pin_locked_until`, `password_failed_attempts`, `password_locked_until` (Forgot PIN lockout; written only by the library app today) |
 | `admins` | Back-office admin profile | `name` |
 | `refresh_tokens` | Revocable sessions | `token_hash` (SHA-256 hex, unique), `expires_at` (+7 days), `revoked_at` |
 | `books` | Master book | `age_type` `range`/`plus`, `age_min`, `age_max` (range only), `price`, `status` `draft`/`published`, `epub_content BYTEA`, `deleted_at` |
@@ -54,6 +56,7 @@ subscription_plans ──> admins (updated_by)
 | Prices sane | `CHECK (price >= 0)` on books/orders; `CHECK (price > 0)` on the plan |
 | A history row is a real change (E-CR6) | `CHECK (new_price <> old_price)` on `subscription_plan_price_history` |
 | Account type matches owner | `CHECK` on `credentials` |
+| One account per email, ignoring case | `UNIQUE INDEX uq_credentials_email_lower ON credentials (lower(email))` |
 
 State transitions (`pending → paid/failed`, `active → cancelled/expired`) use conditional updates (`UPDATE … WHERE status = 'pending' RETURNING id`). If two requests race, only one wins; the other gets `DUPLICATE_REQUEST`, or is skipped in the renewal job.
 

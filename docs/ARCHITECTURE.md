@@ -9,6 +9,8 @@ One Go API serves two Lovable frontends:
 
 Login and payment are **mocked** (seeded accounts; pay endpoints take `success`/`failed`).
 
+**Shared database:** the separate `storybook_library_app` backend reads and writes the same PostgreSQL database. This repo owns the schema; that app runs no migrations ([ADR-010](DECISIONS.md#adr-010)). Both run the renewal job, which stays safe because of the conditional update and the `renewal:<id>` idempotency key.
+
 ## Tech stack
 | Layer | Technology |
 |---|---|

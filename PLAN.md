@@ -94,6 +94,12 @@ One file per domain layer (`controller.go`, `service.go`, `repository.go` plus `
 4. A child holding the parent's token can call parent endpoints directly (D7). This is accepted per the PRD; real protection needs child profiles (out of scope).
 5. Single-instance scheduler: the conditional update prevents double renewal, but with several instances every one of them would scan. Logged as tech debt.
 
+## Deviations from this plan (made during implementation)
+- Added `migrations/migration_test.go` (`TestOrdered_MatchesSortedSQLFiles`), a unit test in `make done` that enforces S4. It and `TestSchema_InsertsWithoutTimestamps_UseDefaults` passed before the migration: they guard the contract rather than drive the change.
+- The library also deleted `pkg/migrator`; nothing else used it.
+- The library integration test's fixture passwords are new test-only values, not the old demo passwords.
+- Tech debt: management TD-12, TD-13; library TD-009, TD-010, plus TD-011 (demo passwords in git history).
+
 ## Tech-debt entries this plan will add
 EPUB/cover stored in the DB · no pagination · HS256 shared secret · in-process scheduler · no rate limit on `/auth/login` (only the PIN has a lockout) · mocked auth and payment
 
@@ -141,3 +147,89 @@ Auth, book orders/payment (P7), adminbook, book, renewal scheduler, the existing
 ## Risks
 - Price check on pay and `Activate` are not one transaction: an admin change in that millisecond window is charged at the order price. Acceptable for a mock payment.
 - `expected_price` is a breaking change for existing `POST /subscription-orders` clients.
+
+---
+
+# Plan: Shared schema — management app owns it, library app's changes merged in
+**Classification:** INTERNAL
+**Source:** engineer request 2026-11-16: both backends must use one database, this repo owns the schema, and the library app's schema changes are merged in.
+**Branch:** `feat/STORY-3-shared-schema` (no ticket; STORY-3 is a placeholder), cut from `feat/STORY-2-cr001-badge-plan-pricing`. The library repo gets the same branch name.
+**Status:** DONE (Phases 1–4); Phase 5 is a manual local step. S1–S7 approved as recommended on 2026-11-16. Risk 3 is still open and tracked as TD-12.
+
+## What is different today (verified by reading both repos)
+| Area | management_app (owner) | storybook_library_app | Action |
+|---|---|---|---|
+| Migration ids | `…000001_create_storybook_schema`, `20261117000001_cr001_plan_price_history` | `…000001_create_storybook_tables`, `…02_seed…`, `…03_add_forgot_pin_attempt_limit`, `…04_cr001_plan_pricing` | Ids never match, so a shared `migrations` table breaks. The library stops migrating (S1). |
+| `users.password_failed_attempts`, `password_locked_until` | missing | added by `…03`, used by library Forgot PIN lockout (4 tries, 60 s) | **Merge** |
+| Email uniqueness | `UNIQUE (email)`, case-sensitive; seed stores lowercase | unique index on `lower(email)`; login queries `lower(email) = lower(?)` | **Merge**: add `lower(email)` unique index (S2) |
+| FK indexes | none on these | `subscription_orders(plan_id)`, `subscription_plans(updated_by)`, `subscription_plan_price_history(changed_by)` | **Merge** |
+| `created_at`/`updated_at` on `subscriptions`, `book_orders`, `subscription_orders`, `subscription_plans.created_at` | present, written by management code | missing; library inserts leave them out | Keep. `DEFAULT NOW()` fills them on library inserts. |
+| Text lengths (`users/admins.name` 200, plan `code` 50/`name` 200, hashes `VARCHAR(255)`) | wider | narrower or `TEXT` | Keep management's. It accepts everything the library writes. |
+| `epub_size_bytes`/`size_bytes` | `INTEGER` | `BIGINT` | Keep `INTEGER`. The 50 MB cap fits easily. |
+| Status defaults (`books` `'draft'`, orders `'pending'`) | present | none; library always sends `status` explicitly | Keep |
+| Index names | `idx_*` / `uq_*` | `*_idx` / `*_key` | Keep management's; renaming has no effect. |
+| Seed | `go run main.go seed`, values from `SEED_*` env vars | SQL migration with hardcoded demo accounts and bcrypt hashes | **Do not merge** (S3) |
+
+Compatibility checks (already verified):
+- Renewal job: both apps use the idempotency key `renewal:<old subscription id>` and a conditional `WHERE status = 'active'` update. If both jobs run on one DB, only one renewal per period commits.
+- PIN lockout: both apps use 5 attempts and a 60 s lock on `pin_failed_attempts` / `pin_locked_until`.
+- Every library `INSERT` either names its columns or relies on defaults that exist in management's schema. No column the library reads is missing apart from the two password-lockout columns.
+
+## Decisions (please confirm or annotate)
+| # | Decision | Recommendation |
+|---|---|---|
+| S1 | How the library app gets the schema | Library deletes its `migrations/` package and `migrate` command. Its integration test applies `$SCHEMA_DIR/*.sql` sorted by filename (default `../storybook_management_app/migrations`). Rejected: git submodule (heavy for two local repos); copying files (drifts again). Both modules are named `codebase`, so a Go import is not possible. |
+| S2 | Email uniqueness | Add `UNIQUE INDEX uq_credentials_email_lower ON credentials (lower(email))` and keep the existing `UNIQUE (email)`. No Go change: management already lowercases before lookup. |
+| S3 | Library seed migration | Not merged. Dev accounts come from management `make seed`. The library integration test creates its own fixtures (parent, second parent, admin), with bcrypt hashes generated at test time from test-only passwords. No hashes in source. |
+| S4 | Migration filename sort order = apply order | Make this a rule in DATA-MODELS.md (already true). S1 depends on it. |
+| S5 | Management app and the password lockout | Schema only. Management's Forgot PIN keeps working without the lockout. See Risk 3. |
+| S6 | Shared local DB | Management's Postgres on port 5433, database `storybook`. Library `.env.example` changes `DB_PORT` to 5433. The old library DB on 5432 is dropped. ASSUMPTION: it holds only local dev data. |
+| S7 | Renewal job running in both apps | Keep both; it's safe (see compatibility checks). Logged as tech debt. |
+
+## Phases
+Each phase is two commits: `test(…)` (failing output shown), then `feat(…)`/`chore(…)` (`make done` green). Integration runs use `make test-integration` (needs `make db-up`).
+
+- [x] **Phase 1, library (test):** switch `handler/integration_test.go` to load the schema from `SCHEMA_DIR` and create its fixtures in the test (S1, S3). Run it against management's current migrations.
+  **Expected red:** `column u.password_locked_until does not exist`, and a case-insensitive duplicate email accepted.
+- [x] **Phase 2, management (db):** new file `migrations/20261117000002_merge_library_schema.sql`, appended to `migrations` in [migrations/migration.go](migrations/migration.go):
+  ```sql
+  ALTER TABLE users
+      ADD COLUMN password_failed_attempts INTEGER NOT NULL DEFAULT 0,
+      ADD COLUMN password_locked_until    TIMESTAMPTZ;
+  CREATE UNIQUE INDEX uq_credentials_email_lower ON credentials (lower(email));
+  CREATE INDEX idx_subscription_orders_plan_id ON subscription_orders(plan_id);
+  CREATE INDEX idx_subscription_plans_updated_by ON subscription_plans(updated_by);
+  CREATE INDEX idx_plan_price_history_changed_by ON subscription_plan_price_history(changed_by);
+  ```
+  Failing tests first, in [internal/repositories/testdb/schema_integration_test.go](internal/repositories/testdb/schema_integration_test.go):
+  - `TestSchema_NewUser_PasswordLockoutDefaultsToZero`
+  - `TestSchema_EmailDiffersOnlyByCase_Rejected`
+  - `TestSchema_InsertsWithoutTimestamps_UseDefaults` (library-style inserts into `books`, `book_files`, `book_orders`, `subscriptions`, `subscription_orders`, `refresh_tokens`)
+
+  Then the library suite from Phase 1 should go green.
+- [x] **Phase 3, library (chore):** delete `migrations/` (including the seed SQL), the `migrate` case in `main.go`, and the Makefile target. `.env.example`: `DB_PORT=5433`. README setup: `make -C ../storybook_management_app db-up migrate seed`. `make test-integration` sets `SCHEMA_DIR`.
+- [x] **Phase 4, both (docs):**
+  - Management: DATA-MODELS (new columns, email index, ownership rule, S4), ARCHITECTURE (two backends, one DB), ADR-010 "management_app owns the shared schema", `tech-debt.md`.
+  - Library: DATA-MODELS and ARCHITECTURE point to management's schema, plus `tech-debt.md`.
+- [ ] **Phase 5, local cutover (manual, no commit):**
+  1. Check for case-duplicate emails: `SELECT lower(email) FROM credentials GROUP BY 1 HAVING count(*) > 1;`. This must return no rows.
+  2. Run management `make migrate`.
+  3. Switch library `.env` to 5433 and start it.
+  4. Smoke test: log in to both apps, and check that a book bought in the library app shows up through the management app.
+
+## Not touched
+- Management: the two existing migration files (never edit an applied migration), `seed.go`, auth, payment and webhook logic, services, handlers, `models/storybook.go` (GORM ignores the extra `users` columns).
+- Library: services, repositories, handlers. They already fit the merged schema.
+
+## Risks / open questions
+1. **Case-duplicate emails** make the `lower(email)` index fail, and the whole migration with it. Phase 5 step 1 checks for this first.
+2. **Library writes leave `updated_at` stale** on `subscriptions`, `book_orders` and `subscription_orders`. Nothing reads them today, so this goes in tech debt and is not fixed.
+3. **Open question: which backend does each frontend call?** Both backends implement the parent and admin endpoints. If the parent frontend can reach management's `/me/pin/forgot`, the library's password lockout is bypassable. Please confirm the routing; if it can reach it, the lockout should be ported to management in a follow-up.
+4. **Seed credentials stay in git history.** Deleting the library seed migration removes them from HEAD but not from history, and the branch is already pushed to origin. Change those demo passwords anywhere they are used beyond localhost. A history rewrite is not planned.
+5. **Coupling through a sibling path.** The library's integration test needs management checked out next to it. Acceptable for two local repos; `SCHEMA_DIR` overrides the path.
+
+## Tech-debt entries this plan will add
+- **Medium:** two backends implement the same rules against one DB, so the rules will drift (Risk 3).
+- **Medium:** both apps run the renewal job (S7).
+- **Low:** library writes don't maintain `updated_at` (Risk 2).
+- **Low:** schema shared by sibling path (Risk 5).
