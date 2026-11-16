@@ -146,12 +146,24 @@ func TestLogin_StoreRefreshFails_ReturnsGeneralError(t *testing.T) {
 func TestRefresh_ValidToken_ReturnsNewAccessTokenOnly(t *testing.T) {
 	repo := new(repository_mock.AccountRepository)
 	repo.On("GetRefreshToken", sha("rt-1")).Return(&models.RefreshToken{CredentialID: "cred-1", ExpiresAt: now.Add(time.Hour)}, nil)
-	repo.On("GetCredentialByID", "cred-1").Return(parentCred(t), nil)
+	repo.On("GetCredentialByID", "cred-1").Return(adminCred(t), nil)
 	got, err := newSvc(repo).Refresh("rt-1")
 	require.NoError(t, err)
 	assert.NotEmpty(t, got.AccessToken)
 	assert.Empty(t, got.RefreshToken)
 	assert.Equal(t, 1800, got.ExpiresIn)
+	assert.Equal(t, models.AccountAdmin, got.AccountType)
+}
+
+// refresh_tokens is shared with storybook_library_app (ADR-010); its parent tokens must not
+// mint access tokens here (STORY-4, F3).
+func TestRefresh_ParentRefreshToken_ReturnsUnauthorized(t *testing.T) {
+	repo := new(repository_mock.AccountRepository)
+	repo.On("GetRefreshToken", sha("rt-1")).Return(&models.RefreshToken{CredentialID: "cred-1", ExpiresAt: now.Add(time.Hour)}, nil)
+	repo.On("GetCredentialByID", "cred-1").Return(parentCred(t), nil)
+	got, err := newSvc(repo).Refresh("rt-1")
+	assert.Nil(t, got)
+	assert.Equal(t, respConst.UNAUTHORIZED, helpers.ErrCode(err))
 }
 
 func TestRefresh_UnknownToken_ReturnsUnauthorized(t *testing.T) {

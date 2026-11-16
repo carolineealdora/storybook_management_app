@@ -73,28 +73,16 @@ func TestRoute_NoPartnerHeader_NotRequired(t *testing.T) {
 
 var publicRoutes = map[string]bool{
 	"GET /api/v1/healthcheck":       true,
-	"POST /api/v1/auth/login":       true,
 	"POST /api/v1/auth/refresh":     true,
 	"POST /api/v1/admin/auth/login": true,
 }
 
-// Routes both parent and admin tokens may call.
-var sharedRoutes = map[string]bool{
-	"GET /api/v1/books/:id/cover": true, // admin app shows covers too
-}
-
-// expectedRoutes grows with each phase; it guards against an endpoint silently going missing.
+// expectedRoutes guards against an endpoint silently going missing. This backend serves
+// only fe_storybook_management_app; parent endpoints live in storybook_library_app (ADR-011).
 var expectedRoutes = []string{
-	"POST /api/v1/auth/login",
 	"POST /api/v1/auth/refresh",
-	"POST /api/v1/auth/logout",
 	"POST /api/v1/admin/auth/login",
 	"POST /api/v1/admin/auth/logout",
-	"GET /api/v1/me",
-	"PATCH /api/v1/me",
-	"PUT /api/v1/me/pin",
-	"POST /api/v1/me/pin/verify",
-	"POST /api/v1/me/pin/forgot",
 	"GET /api/v1/admin/books",
 	"POST /api/v1/admin/books",
 	"GET /api/v1/admin/books/:id",
@@ -102,11 +90,23 @@ var expectedRoutes = []string{
 	"DELETE /api/v1/admin/books/:id",
 	"GET /api/v1/admin/subscription-plan",
 	"PUT /api/v1/admin/subscription-plan",
+	"GET /api/v1/books/:id/cover",
+}
+
+// removedParentRoutes must not exist here: a parent could otherwise bypass the library
+// backend's parent-mode token and Forgot PIN lockout (STORY-4, F1).
+var removedParentRoutes = []string{
+	"POST /api/v1/auth/login",
+	"POST /api/v1/auth/logout",
+	"GET /api/v1/me",
+	"PATCH /api/v1/me",
+	"PUT /api/v1/me/pin",
+	"POST /api/v1/me/pin/verify",
+	"POST /api/v1/me/pin/forgot",
+	"GET /api/v1/me/books",
 	"GET /api/v1/books",
 	"GET /api/v1/books/:id",
-	"GET /api/v1/books/:id/cover",
 	"GET /api/v1/books/:id/content",
-	"GET /api/v1/me/books",
 	"POST /api/v1/book-orders",
 	"GET /api/v1/book-orders",
 	"POST /api/v1/book-orders/:id/pay",
@@ -176,30 +176,41 @@ func TestRoutes_ProtectedWithoutToken_Return401(t *testing.T) {
 	assert.GreaterOrEqual(t, checked, 2)
 }
 
-func TestRoutes_AdminRoutesWithParentToken_Return403(t *testing.T) {
+func TestRoutes_EveryProtectedRouteWithParentToken_Returns403(t *testing.T) {
 	h := newTestHolder()
 	InitRoute(h)
 	auth := bearer(t, models.AccountParent)
+	checked := 0
 	for _, r := range apiRoutes(h) {
 		key := r.Method + " " + r.Path
-		if publicRoutes[key] || sharedRoutes[key] || !strings.HasPrefix(r.Path, "/api/v1/admin/") {
+		if publicRoutes[key] {
 			continue
 		}
+		checked++
 		rec := call(h, r, auth)
 		assert.Equal(t, http.StatusForbidden, rec.Code, key)
 	}
+	assert.GreaterOrEqual(t, checked, len(expectedRoutes)-len(publicRoutes)+1)
 }
 
-func TestRoutes_ParentRoutesWithAdminToken_Return403(t *testing.T) {
+func TestRoute_CoverWithParentToken_Returns403(t *testing.T) {
 	h := newTestHolder()
 	InitRoute(h)
-	auth := bearer(t, models.AccountAdmin)
-	for _, r := range apiRoutes(h) {
-		key := r.Method + " " + r.Path
-		if publicRoutes[key] || sharedRoutes[key] || strings.HasPrefix(r.Path, "/api/v1/admin/") || r.Path == "/api/v1/healthcheck" {
-			continue
-		}
-		rec := call(h, r, auth)
-		assert.Equal(t, http.StatusForbidden, rec.Code, key)
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/books/11111111-1111-1111-1111-111111111111/cover", nil)
+	req.Header.Set(echo.HeaderAuthorization, bearer(t, models.AccountParent))
+	assert.Equal(t, http.StatusForbidden, serve(h, req).Code)
+}
+
+func TestRoute_ParentEndpoints_Return404(t *testing.T) {
+	h := newTestHolder()
+	InitRoute(h)
+	auth := bearer(t, models.AccountParent)
+	for _, key := range removedParentRoutes {
+		method, path, _ := strings.Cut(key, " ")
+		req := httptest.NewRequest(method, paramRe.ReplaceAllString(path, "11111111-1111-1111-1111-111111111111"), nil)
+		req.Header.Set(echo.HeaderAuthorization, auth)
+		rec := serve(h, req)
+		assert.Equal(t, http.StatusNotFound, rec.Code, key)
+		assert.Contains(t, rec.Body.String(), `"NOT_FOUND"`, key)
 	}
 }
